@@ -48,6 +48,10 @@ class SimulationResult:
 
 
 def _open_source(settings: AppSettings):
+    if settings.camera.source == "picamera2":
+        from vidi.camera.picamera2 import Picamera2Capture
+
+        return Picamera2Capture(settings.camera)
     if settings.camera.source == "imx500":
         from vidi.camera.imx500 import Imx500Capture
 
@@ -85,6 +89,10 @@ def run_simulation(
         from vidi.ai.object_detection import FixtureDetector
 
         detector = FixtureDetector(settings.detection.fixture_path, settings.detection)
+    elif backend == "opencv_ssd":
+        from vidi.ai.cpu_detection import OpenCvSsdDetector
+
+        detector = OpenCvSsdDetector(settings.models, settings.detection)
 
     count = ready = not_ready = 0
     last_packet = last_detection = None
@@ -97,7 +105,7 @@ def run_simulation(
             processing_started = time.monotonic()
             for _ in range(settings.simulation.max_frames):
                 started = time.monotonic()
-                if settings.camera.source == "imx500":
+                if settings.camera.source in ("picamera2", "imx500"):
                     packet = capture.read_packet()
                 else:
                     frame = capture.read()
@@ -219,7 +227,7 @@ def run_simulation(
     else:
         logger.info(
             "%s detection completed: %d frame(s), %d ready, %d not ready; last frame has %d detection(s).",
-            "SIMULATED" if result.simulated else "Local AI Camera",
+            "SIMULATED" if result.simulated else f"Local {backend}",
             count, ready, not_ready, len(result.detections),
         )
     if output is not None:

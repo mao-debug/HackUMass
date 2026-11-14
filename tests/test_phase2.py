@@ -213,7 +213,7 @@ def test_all_not_ready_run_is_not_reported_as_success(monkeypatch, tmp_path, cap
     monkeypatch.setattr(controller, "_open_source", lambda settings: manager)
     report = tmp_path / "warming.json"
     assert main([
-        "--config", str(ROOT / "config/pi.yaml"), "--max-frames", "1", "--report", str(report)
+        "--config", str(ROOT / "config/pi-imx500.yaml"), "--max-frames", "1", "--report", str(report)
     ]) == 1
     assert "No inference results arrived" in caplog.text
     assert json.loads(report.read_text())["last_inference_status"] == "not_ready"

@@ -1,6 +1,6 @@
 # Hardware-free default. No network requests, inference, or audio output.
 camera:
-  source: sample  # sample (synthetic), image, webcam, or imx500
+  source: sample  # sample (synthetic), image, webcam, picamera2, or imx500
   image_path: null  # Required for image; relative to this YAML file.
   webcam_index: 0
   width: 640
@@ -15,10 +15,11 @@ simulation:
   output_path: null  # Optional last-frame export, relative to this YAML file.
   report_path: null  # Optional JSON report; never an automatic recording.
 
-# Select none/null, fixture, or imx500 explicitly. No automatic downloads.
+# Select none/null, fixture, opencv_ssd, or imx500 explicitly. No automatic downloads.
 models:
   object_detection_backend: null
   object_detection_path: null
+  object_detection_config_path: null
   scene_description_backend: null
   ocr_backend: null
   speech_recognition_backend: null

@@ -1,16 +1,18 @@
-# Use only after the board, camera, OS packages, and local model are verified.
+# Camera Module 3 (IMX708): Picamera2 capture and OpenCV CPU inference.
+# Obtain the local model explicitly first; see docs/models.md. No downloads at startup.
 camera:
-  source: imx500
+  source: picamera2
   width: 640
   height: 480
-  fps: 5.0
-  startup_timeout_s: 300.0
+  fps: 2.0
+  startup_timeout_s: 30.0
   capture_timeout_s: 5.0
 models:
-  object_detection_backend: imx500
-  object_detection_path: /usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk
+  object_detection_backend: opencv_ssd
+  object_detection_path: ../models/mobilenet-ssd/mobilenet_iter_73000.caffemodel
+  object_detection_config_path: ../models/mobilenet-ssd/deploy.prototxt
 simulation:
-  max_frames: 100
+  max_frames: 20
   preview: false
 detection:
   confidence_threshold: 0.55

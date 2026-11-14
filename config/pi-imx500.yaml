@@ -1,0 +1,17 @@
+# Optional AI Camera only; the currently connected IMX708 cannot use this profile.
+camera:
+  source: imx500
+  width: 640
+  height: 480
+  fps: 5.0
+  startup_timeout_s: 300.0
+  capture_timeout_s: 5.0
+models:
+  object_detection_backend: imx500
+  object_detection_path: /usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk
+simulation:
+  max_frames: 100
+  preview: false
+detection:
+  confidence_threshold: 0.55
+  max_detections: 10

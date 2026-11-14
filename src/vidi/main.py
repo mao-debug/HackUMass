@@ -14,19 +14,20 @@ from vidi.core.configuration import ConfigurationError, load_settings, validate_
 def build_parser() -> argparse.ArgumentParser:
     """Describe local backends and the per-run cloud opt-in."""
     parser = argparse.ArgumentParser(
-        description="vidi Phase 2: local AI Camera detection, simulation, and optional Gemini descriptions."
+        description="vidi Phase 2: local camera detection, simulation, and optional Gemini descriptions."
     )
     parser.add_argument("--version", action="version", version=f"vidi {__version__}")
     parser.add_argument("--config", type=Path, help="YAML path; omitted means built-in defaults")
-    parser.add_argument("--source", choices=("sample", "image", "webcam", "imx500"))
+    parser.add_argument("--source", choices=("sample", "image", "webcam", "picamera2", "imx500"))
     parser.add_argument("--image", type=Path, help="Image path (selects image unless --source is given)")
     parser.add_argument("--camera-index", type=int, help="Webcam index (selects webcam unless --source is given)")
     parser.add_argument("--max-frames", type=int, help="Positive frame limit (default: 1)")
     parser.add_argument("--preview", action=argparse.BooleanOptionalAction, default=None,
                         help="Open a local preview window; requires a desktop display")
     parser.add_argument("--output", type=Path, help="Save the last frame to a local image path")
-    parser.add_argument("--detector", choices=("none", "imx500", "fixture"), help="Explicit detector selection")
-    parser.add_argument("--model", type=Path, help="Local IMX500 RPK file; never downloaded automatically")
+    parser.add_argument("--detector", choices=("none", "imx500", "opencv_ssd", "fixture"), help="Explicit detector selection")
+    parser.add_argument("--model", type=Path, help="Local IMX500 RPK or MobileNet-SSD Caffe weights; no automatic download")
+    parser.add_argument("--model-config", type=Path, help="Local MobileNet-SSD deploy.prototxt for opencv_ssd")
     parser.add_argument("--labels", type=Path, help="Model-aligned label file, preserving class ID gaps")
     parser.add_argument("--threshold", type=float, help="Confidence threshold between 0 and 1")
     parser.add_argument("--max-detections", type=int, help="Positive maximum detections per frame")
@@ -70,6 +71,8 @@ def main(argv: list[str] | None = None) -> int:
             model_changes["object_detection_backend"] = args.detector
         if args.model is not None:
             model_changes["object_detection_path"] = args.model.expanduser().resolve()
+        if args.model_config is not None:
+            model_changes["object_detection_config_path"] = args.model_config.expanduser().resolve()
         detection_changes = {}
         if args.labels is not None:
             detection_changes["labels_path"] = args.labels.expanduser().resolve()

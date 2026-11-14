@@ -1,11 +1,12 @@
 # vidi
 
 vidi is a HackUMass smart glasses prototype for blind and visually impaired
-users. Phase 2 adds local object detection with the Raspberry Pi AI Camera
-(IMX500), replay of simulated detections on macOS, and an optional one-shot
-Gemini description for the demonstration. OCR, speech output, and voice commands
-remain deferred. Hardware operation and performance still require on-device
-verification.
+users. The connected Pi 4 camera reports **IMX708 (Camera Module 3)**. Phase 2
+uses Picamera2 capture and local OpenCV DNN CPU detection with MobileNet-SSD.
+The separate IMX500 AI Camera backend remains optional for that different
+sensor. macOS supports fixture replay, and an explicit one-shot Gemini text
+description is available for the demonstration. OCR, speech output, and voice
+commands remain deferred. Live detection and performance need on-device checks.
 
 The default run processes one synthetic sample frame with detection disabled.
 It opens no camera or preview, loads no model, makes no network request, and
@@ -34,9 +35,9 @@ PyYAML. `requirements-dev.txt` also installs Pytest. Raspberry Pi packages are
 excluded. Existing local dependencies can be reused without another download.
 After setup, sample/image processing and fixture replay work offline.
 
-macOS is the fixture-replay development environment for Phase 2. Real detection
-targets the Pi 4 and its AI Camera; a webcam remains available as a frame source
-without a local Mac inference backend.
+macOS is the fixture-replay development environment for Phase 2. The approved
+CPU model can also be loaded against a sample/image for a setup smoke test;
+this does not establish accuracy or Pi performance.
 
 ## Run locally
 
@@ -66,13 +67,15 @@ directory after installation. CLI paths are relative to the current directory;
 paths in YAML are relative to the YAML file's directory. CLI values override
 the corresponding settings.
 
-`--source` selects `sample`, `image`, `webcam`, or `imx500`; `--image PATH`
+`--source` selects `sample`, `image`, `webcam`, `picamera2`, or `imx500`; `--image PATH`
 selects image input and `--camera-index N` selects webcam input unless a source
-is explicit. `--detector` selects `none`, `fixture`, or `imx500`.
-`--detections-fixture PATH` supplies replay data; `--model PATH` supplies the
-supported local SSD MobileNetV2 FPNLite 320 PP `.rpk`, and `--labels PATH`
-supplies labels aligned to that model. Other networks need a matching decoder
-and are rejected in this phase. Use
+is explicit. `--detector` selects `none`, `fixture`, `opencv_ssd`, or `imx500`.
+`--detections-fixture PATH` supplies replay data. CPU detection uses `--model`
+for the MobileNet-SSD `.caffemodel` and `--model-config` for `deploy.prototxt`.
+It supports the model's 20 VOC object classes, including people, chairs, and
+some vehicles; doors and signs are not supported classes. The optional IMX500
+decoder instead accepts its specific baseline `.rpk` and model-aligned
+`--labels`. Other networks require matching decoders. Use
 `--threshold` for the confidence filter and `--max-detections` to limit results.
 
 `--max-frames` sets a positive frame limit. `--preview`/`--no-preview` control
@@ -84,28 +87,45 @@ logging. A fixture report is explicitly marked simulated.
 
 ## Raspberry Pi setup and acceptance
 
-The Pi 4 and AI Camera are available; a partner has connected a monitor and
-keyboard. The installed OS is unknown. **Inspect and preserve the existing
-installation before changing packages or hardware configuration.** The Pi 5
-with 8 GB RAM is requested and unverified.
+The confirmed Pi 4 runs Debian 12, aarch64, Python 3.11.2, NumPy 1.24.2,
+PyYAML 6, setuptools 66, Picamera2 0.3.27, and installed OS OpenCV 4.6.0. The
+partner's monitor and keyboard are connected. **Preserve this installation.**
+The Pi 5 with 8 GB RAM is requested and unverified. The active camera's IMX708
+sensor is not IMX500; do not use an IMX500 model with it.
 
-Use the separate Pi installation procedure in [docs/phase2.md](docs/phase2.md).
-It keeps NumPy, OpenCV, Picamera2, and the IMX500 runtime from compatible OS
-packages, then uses a `--system-site-packages` virtual environment. Do not run
-the desktop requirements on the Pi or overlay pip NumPy/OpenCV onto its camera
-stack. Package installation and model/label downloads require approval.
-
-After those prerequisites and model labels are verified locally:
+Work from the repository root after the existing GitHub branch handoff or a
+USB source transfer; no SSH setup is required. With the confirmed system
+libraries, the first camera-only check needs no pip installation or model:
 
 ```sh
-PYTHONNOUSERSITE=1 .venv-pi/bin/python -m vidi --config config/pi.yaml --max-frames 100 --no-preview --report artifacts/pi-offline-100.json
+PYTHONNOUSERSITE=1 PYTHONPATH=src /usr/bin/python3 -m vidi --config config/pi.yaml --detector none --max-frames 3 --output artifacts/pi-camera.png
 ```
 
-This is the planned 100-frame offline bench test, not evidence of a completed
-hardware test. Record versions, startup/capture timings, observed rate, and
-failure behavior; there is no fixed accuracy or FPS claim. The configuration's
-5 FPS is a requested loop rate. See [docs/hardware.md](docs/hardware.md) for the
-inventory and [docs/phase2.md](docs/phase2.md) for acceptance criteria.
+For the installed workflow, reuse system packages in a separate environment:
+
+```sh
+/usr/bin/python3 -m venv --system-site-packages .venv-pi
+export PYTHONNOUSERSITE=1
+.venv-pi/bin/python -m pip install --no-index --no-deps --no-build-isolation -e .
+```
+
+Do not install desktop requirements or pip NumPy/OpenCV/Picamera2 on the Pi.
+Model downloads from the fixed author-repository commit have been approved;
+see [docs/models.md](docs/models.md) for the exact URLs, MIT license, local
+paths, and checksums. The application never downloads a model at startup.
+Once those files are present, run a local load/forward smoke test, then a short
+live test:
+
+```sh
+.venv-pi/bin/python -m vidi --source sample --detector opencv_ssd --model models/mobilenet-ssd/mobilenet_iter_73000.caffemodel --model-config models/mobilenet-ssd/deploy.prototxt --report artifacts/cpu-smoke.json
+.venv-pi/bin/python -m vidi --config config/pi.yaml --max-frames 20 --no-preview --output artifacts/pi-detections.png --report artifacts/pi-cpu.json
+```
+
+`config/pi.yaml` requests 640×480 at a 2 FPS loop limit; actual CPU rate is
+unmeasured. The later 100-frame offline bench procedure is in
+[docs/phase2.md](docs/phase2.md). No live-detection success, accuracy, or achieved
+FPS is claimed here. Missing local build prerequisites should be reported
+before adding packages; the source-tree command above remains available.
 
 ## Optional Gemini demonstration
 
@@ -137,11 +157,14 @@ cloud failure must leave the local detection result available.
 
 [config/settings.yaml](config/settings.yaml) is the safe default;
 [config/fixtures.yaml](config/fixtures.yaml) selects replay, and
-[config/pi.yaml](config/pi.yaml) selects the local AI Camera. The `camera`,
+[config/pi.yaml](config/pi.yaml) selects IMX708/Picamera2 with CPU detection;
+[config/pi-imx500.yaml](config/pi-imx500.yaml) is the optional AI Camera profile.
+The `camera`,
 `simulation`, `detection`, `models`, and `cloud` sections configure their
 respective boundaries. Unknown keys and invalid values fail clearly. The
-`models.object_detection_backend` and `object_detection_path` settings are now
-active; OCR and audio backend selections remain reserved for later phases.
+`models.object_detection_backend`, `object_detection_path`, and
+`object_detection_config_path` settings are active; OCR and audio backend
+selections remain reserved for later phases.
 
 ```sh
 python -m pytest
@@ -174,6 +197,7 @@ without silently changing the selected backend.
 
 The repository root is the vidi project. Code lives in `src/vidi/`: `camera/`
 owns capture, `ai/object_detection.py` owns detection results and replay,
+`ai/cpu_detection.py` owns CPU detection,
 `ai/scene_description.py` owns the optional cloud boundary, and `core/` owns
 configuration and the bounded controller. `main.py` and `__main__.py` expose the
 CLI. `audio/`, `assistant/`, and `ai/text_recognition.py` remain later-phase

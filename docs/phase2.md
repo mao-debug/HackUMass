@@ -1,158 +1,88 @@
-# vidi Phase 2 plan and acceptance
+# vidi Phase 2 setup and acceptance
 
-This document records the selected Phase 2 implementation and the remaining
-on-device acceptance work. Software fixtures and mocked tests are not evidence
-that the physical camera, model, or cloud service has passed a live test.
+The connected camera is **Camera Module 3 (IMX708)**. The primary path is
+Picamera2 capture plus OpenCV DNN CPU inference with MobileNet-SSD. The optional
+IMX500 AI Camera implementation is for a different sensor and cannot run on
+IMX708. Preserve the partner's existing Pi installation.
 
-## Selected scope
+## Confirmed hardware and software
 
-- Run real local detection on the available Raspberry Pi 4 and AI Camera
-  (IMX500). The partner's monitor and keyboard are connected; inspect and
-  preserve the current OS before changing it. The requested Pi 5 remains
-  unverified.
-- Use the official SSD MobileNet FPNLite 320 model as the baseline. Load its
-  local packaged `.rpk` network, parse output metadata, and expose filtered
-  labels, confidences, and image-space boxes. Do not train, convert, or download
-  a model automatically.
-- Develop on macOS using synthetic/image frames and clearly identified fixture
-  replay. Fixture boxes are invented development data, not detections from a
-  Mac inference model.
-- Offer an explicit one-shot Gemini text description for the demonstration.
-  Keep it separate from local predictions. No audio, OCR, or voice commands are
-  added in this phase.
-- Keep local detection usable without a network connection. Default execution
-  stays hardware-free: one synthetic frame, detector `none`, no preview,
-  export, or cloud request.
+The target is a Raspberry Pi 4 running Debian 12, aarch64, Python 3.11.2,
+NumPy 1.24.2, PyYAML 6, setuptools 66, Picamera2 0.3.27, and installed OS OpenCV
+4.6.0. rpicam reports IMX708. The monitor and keyboard are connected. These
+observations are not a completed vidi capture or detection test. The requested
+Pi 5 with 8 GB RAM remains unverified.
 
-No precise distances, guaranteed navigation safety, fixed accuracy, or achieved
-FPS are claimed. Detection supports only the chosen model's label set; an empty
-result does not establish that a scene is safe.
-
-## Configuration and data contracts
-
-`config/settings.yaml` supplies defaults; `config/fixtures.yaml` selects replay;
-`config/pi.yaml` selects the AI Camera. CLI values override YAML. CLI paths are
-relative to the current working directory; YAML paths are relative to that
-file. Unknown or invalid settings fail rather than being silently ignored.
-
-| Setting | Default or meaning |
-| --- | --- |
-| `camera.source` | `sample`; alternatives `image`, `webcam`, `imx500` |
-| `camera.width`, `height`, `fps` | `640`, `480`, `5.0`; requested capture/loop settings, not measured performance |
-| `camera.startup_timeout_s`, `capture_timeout_s` | `300.0`, `5.0`; startup accommodates initial model loading |
-| `simulation.max_frames`, `preview` | `1`, `false`; Pi bench config requests 100 frames |
-| `simulation.output_path`, `report_path` | `null`; export only when requested |
-| `models.object_detection_backend` | `null`/`none`, `fixture`, or `imx500` |
-| `models.object_detection_path` | Local supported baseline `.rpk` path, required for selected IMX500 detection |
-| `detection.confidence_threshold`, `max_detections` | `0.55`, `10` |
-| `detection.labels_path`, `fixture_path` | `null`; optional model-aligned labels and explicit fixture input |
-| `models.scene_description_backend` | `null` or `gemini`; this never opts a run into uploading |
-| `cloud.model` | `gemini-3.5-flash-lite`; verify current availability/free-tier eligibility before a call |
-| `cloud.timeout_s`, `max_output_tokens`, `max_image_edge` | `15.0`, `256`, `1024` |
-
-The CLI adds `--source imx500`, `--detector {none,imx500,fixture}`, `--model`,
-`--labels`, `--threshold`, `--max-detections`, `--detections-fixture`, and
-`--report`, while preserving frame count, preview, and image output controls.
-`--describe` opts in once for the run; `--question` requires that flag.
-
-Fixture JSON has the following versioned shape, illustrated by
-`examples/detection-fixture.json`:
-
-```json
-{
-  "version": 1,
-  "image_size": [640, 480],
-  "detections": [
-    {
-      "class_id": 0,
-      "label": "person",
-      "confidence": 0.95,
-      "bbox_xyxy": [64, 160, 256, 384]
-    }
-  ]
-}
-```
-
-Coordinates describe the declared fixture image size; frame dimensions must
-match that size for replay. Reports and previews must
-identify fixture results as simulated. Real detection boxes must correspond to
-the returned camera frame rather than being treated as distance measurements.
-
-## AI Camera model and labels
-
-The selected default model path is:
-
-```text
-/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk
-```
-
-Use compatible OS-provided Picamera2/IMX500 components and a verified local model
-package. The decoder currently accepts only the baseline filename shown above;
-`--model` can select its location but does not make arbitrary networks
-compatible. Other models require an explicitly implemented decoder. Source and
-detector selections must agree; an incompatible input,
-missing model, or unsupported output layout must fail clearly. No hidden model
-download or substitute detector is allowed.
-
-Labels come from an explicit `detection.labels_path`/`--labels` override or the
-network's embedded labels. If neither is usable, stop with a clear error.
-Preserve class IDs and blank/dash entries in supplied label lists; do not guess
-an arbitrary COCO offset or renumber categories. If the official example label
-file is needed, obtaining it is a separate approved download, and its alignment
-with this network must be checked.
-
-The official [AI Camera documentation](https://www.raspberrypi.com/documentation/accessories/ai-camera.html),
-[model catalogue](https://github.com/raspberrypi/imx500-models),
-[object detection example](https://github.com/raspberrypi/picamera2-examples/blob/main/examples/imx500/imx500_object_detection_demo.py),
-and [example COCO labels](https://github.com/raspberrypi/picamera2-examples/blob/main/examples/imx500/assets/coco_labels.txt)
-are the compatibility references. Consult the versions matching the installed
-camera stack; the example labels are not automatically bundled or fetched.
-
-## Inspect the existing Pi before changes
-
-Use the connected desktop to inspect the current installation. These commands
-read local state and do not install software or open a camera:
+Use the existing GitHub branch handoff or transfer the source by USB and open
+a terminal in the repository root. SSH setup is not required. Read-only checks:
 
 ```sh
 cat /etc/os-release
 uname -m
 /usr/bin/python3 --version
 /usr/bin/python3 scripts/check_hardware.py --json
-dpkg-query -W python3-numpy python3-opencv python3-yaml python3-picamera2 python3-setuptools python3-venv imx500-all
+rpicam-hello --list-cameras
 ```
 
-Missing package entries are useful findings, not permission to install them.
-Record OS release, architecture, available storage, board model/RAM, Python
-executable/version, existing package versions, and model/label files. Check
-Python is at least 3.10 and compare the installed OS/camera stack against the
-official compatibility instructions. Inventory the cable and connection before
-any camera run.
+Do not reimage, perform a blanket OS upgrade, change camera configuration, or
+replace the working NumPy/OpenCV/Picamera2 stack. The standard-library hardware
+diagnostic does not import optional libraries or open devices. Its metadata and
+module origins do not prove native ABI compatibility or camera operation.
 
-Preserve the partner's installed OS and files. Do not reimage, perform a blanket
-upgrade, or change boot configuration during inspection. If compatibility
-cannot be established, stop and propose a supported image on a separately
-approved spare microSD card. Package installs, model/label downloads, and
-hardware changes require their own concrete approval.
+## Fast first camera check: no pip install
 
-## Dependency policy and approved-install procedure
+From the repository root, use the confirmed system packages directly:
 
-macOS uses an ordinary isolated `.venv` and the `desktop` extra. Base metadata
-declares `numpy>=1.24,<3` and `PyYAML>=6,<7`; `desktop` adds `numpy>=1.26,<3`
-and `opencv-python>=4.10,<5`. Pytest is a development requirement. The optional
-`gemini` extra pins the locally tested `google-genai==2.34.0`. The SDK was
-installed in the Mac environment with approval; no Pi packages, camera model,
-or labels have been downloaded or installed here.
+```sh
+PYTHONNOUSERSITE=1 PYTHONPATH=src /usr/bin/python3 -m vidi --config config/pi.yaml --detector none --max-frames 3 --output artifacts/pi-camera.png
+```
 
-On the Pi, use one compatible OS package stack for `python3-numpy`,
-`python3-opencv`, `python3-yaml`, `python3-picamera2`, `python3-setuptools`,
-`python3-venv`, and `imx500-all`. The IMX500 package can bring model assets and
-other runtime dependencies. Review the proposed package changes and downloads
-on the actual OS, then obtain approval before running an installation command.
-Do not overlay pip NumPy, OpenCV, or Picamera2 on this stack. apt's `cv2` import
-does not need to advertise a PyPI distribution named `opencv-python`.
+This checks Picamera2 capture and an image export without loading any model or
+contacting a service. Inspect the exported image for correct orientation and
+colors. Stop and report errors before adding packages or changing the OS.
 
-Once the compatible prerequisites are present, create a separate environment
-using the OS interpreter:
+## Approved CPU model and first inference
+
+The author model is [chuanqi305/MobileNet-SSD](https://github.com/chuanqi305/MobileNet-SSD),
+fixed to commit `bb17b6c3eef36d80be441ae8e5339be66e8e3b7a`. Its download and local
+testing were approved. [models.md](models.md) contains the exact fixed URLs,
+SHA-256 hashes, MIT license instructions, and explicit download commands.
+Transfer verified files or use those approved commands on the Pi. Keep the
+upstream license with the assets. Nothing is downloaded at application startup.
+
+Expected files from the repository root:
+
+```text
+models/mobilenet-ssd/mobilenet_iter_73000.caffemodel
+models/mobilenet-ssd/deploy.prototxt
+models/mobilenet-ssd/LICENSE
+```
+
+With those local assets, run a real-model load/forward smoke test, then a short
+camera run using the same source-tree environment:
+
+```sh
+PYTHONNOUSERSITE=1 PYTHONPATH=src /usr/bin/python3 -m vidi --source sample --detector opencv_ssd --model models/mobilenet-ssd/mobilenet_iter_73000.caffemodel --model-config models/mobilenet-ssd/deploy.prototxt --report artifacts/cpu-smoke.json
+PYTHONNOUSERSITE=1 PYTHONPATH=src /usr/bin/python3 -m vidi --config config/pi.yaml --max-frames 20 --no-preview --output artifacts/pi-detections.png --report artifacts/pi-cpu.json
+```
+
+The first command checks model loading, forward execution, and decoding on a
+synthetic frame. It already passed locally on Mac with zero detections; this
+is not an accuracy measurement or a Pi result. `config/pi.yaml` selects
+`picamera2` plus `opencv_ssd`, requests 640×480, a 2 FPS loop limit, and 20
+frames. Actual Pi processing rate is unmeasured. Model paths in that YAML start
+`../models/` because they resolve relative to `config/`.
+
+The decoder follows the author's 300×300 BGR preprocessing and class ordering.
+There are 20 VOC object classes plus background: people, chairs, and some
+vehicles are supported; doors and signs are not. Optional label overrides
+must preserve all 21 class positions. Other models need matching architecture,
+preprocessing, decoder, and labels; changing filenames is insufficient. Empty
+detections do not mean a clear path, and confidence is not measured accuracy.
+
+## Optional editable Pi environment
+
+For an installed CLI after the direct check, reuse OS packages:
 
 ```sh
 /usr/bin/python3 -m venv --system-site-packages .venv-pi
@@ -161,132 +91,116 @@ export PYTHONNOUSERSITE=1
 .venv-pi/bin/python scripts/check_hardware.py --json
 ```
 
-This editable-install command cannot fetch dependencies or an isolated build
-backend. Verify a compatible local setuptools backend (minimum 64) first; stop
-on a missing backend rather than removing these safeguards. Never run
+The backend minimum is setuptools 64; reported setuptools 66 meets it. If a
+local build prerequisite is missing, report the exact error before adding
+software. The source-tree command remains available. Never run desktop
 `requirements.txt`, `requirements-dev.txt`, or the `desktop` extra on the Pi.
-`PYTHONNOUSERSITE=1` prevents user-site packages from shadowing the intended
-system stack.
+Do not pip-install NumPy, OpenCV, or Picamera2 over the OS stack. No new Python
+inference package is needed: OpenCV 4.6.0 supplies the Caffe loader/CPU target.
 
-The diagnostic reads metadata without importing optional libraries; it cannot
-prove ABI compatibility. Before opening the camera, run this explicit local
-import/array smoke test and record the printed versions and origins:
+On macOS, use an ordinary isolated `.venv`, select it in VS Code, and install
+`requirements-dev.txt` only with any required package-download approval. Base
+metadata declares NumPy/PyYAML; the `desktop` extra adds pip OpenCV and a newer
+NumPy floor. The optional `gemini` extra pins the locally tested Google SDK
+2.34.0. Package discovery alone does not prove ABI compatibility; record module
+origins and verify actual imports/array operations before a camera test.
 
-```sh
-PYTHONNOUSERSITE=1 .venv-pi/bin/python -c 'import numpy as np, cv2, yaml, picamera2; print("numpy", np.__version__, np.__file__); print("cv2", cv2.__version__, cv2.__file__); print("yaml", yaml.__version__, yaml.__file__); print("picamera2", picamera2.__file__); print(cv2.cvtColor(np.zeros((2, 2, 3), dtype=np.uint8), cv2.COLOR_BGR2GRAY).shape)'
-```
+## Configuration and replay
 
-NumPy, OpenCV, and the camera libraries should resolve to the intended OS
-`dist-packages`, with compatible versions. If imports fail or resolve to an
-unexpected pip/user environment, stop and repair the environment deliberately.
-Do not fix an ABI failure by upgrading NumPy alone.
+`config/settings.yaml` is the safe default: one synthetic frame, detector
+`none`, no preview/export/network/audio. `config/fixtures.yaml` selects invented
+annotations for macOS replay. `config/pi.yaml` is the active IMX708 CPU profile;
+`config/pi-imx500.yaml` is only for a separately verified AI Camera.
 
-## Local bench acceptance
+CLI paths are relative to the terminal directory; YAML paths are relative to
+the YAML file. CLI values override YAML. Unknown or invalid settings fail.
 
-Run software tests and fixture replay on macOS first:
+| Control | Meaning |
+| --- | --- |
+| `--source` | `sample`, `image`, `webcam`, `picamera2`, or `imx500` |
+| `--detector` | `none`, `fixture`, `opencv_ssd`, or `imx500` |
+| `--model`, `--model-config` | Local CPU weights and Caffe prototxt; also `models.object_detection_path` / `object_detection_config_path` |
+| `--labels` | Model-aligned optional override, retaining class positions |
+| `--threshold`, `--max-detections` | Confidence filter and result limit; defaults 0.55 and 10 |
+| `--detections-fixture` | Versioned replay JSON |
+| `--max-frames`, `--preview` / `--no-preview` | Bounded processing and optional desktop window |
+| `--output`, `--report` | Explicit final-image and JSON exports |
+| `--describe`, `--question` | Per-run cloud opt-in and optional typed question |
+
+`examples/detection-fixture.json` has `version: 1`, `image_size: [640, 480]`,
+and a `detections` list. Each entry has `class_id`, `label`, `confidence`, and
+`bbox_xyxy: [left, top, right, bottom]`. Replay requires matching image size;
+reports/previews mark the detections as simulated. Fixture results are not
+model predictions. Tests and a local fixture export:
 
 ```sh
 python -m pytest
 python -m vidi --config config/fixtures.yaml --max-frames 3 --output artifacts/fixture.png --report artifacts/fixture.json
 ```
 
-On the Pi, after the prerequisite checks, run with networking unavailable or
-disabled through the operator's normal controls:
+## Offline bench acceptance
+
+After the short camera and model checks, use controlled scenes with consenting
+participants and objects supported by the labels. Run a later 100-frame test
+with networking unavailable or disabled by the operator's normal controls:
 
 ```sh
-PYTHONNOUSERSITE=1 .venv-pi/bin/python -m vidi --config config/pi.yaml --max-frames 100 --no-preview --report artifacts/pi-offline-100.json
+PYTHONNOUSERSITE=1 PYTHONPATH=src /usr/bin/python3 -m vidi --config config/pi.yaml --max-frames 100 --no-preview --report artifacts/pi-offline-100.json
 ```
 
-Use a controlled bench scene with consenting participants and examples of
-objects supported by the labels. Record the requested and actual frame sizes,
-number of successful frames, startup time, elapsed processing time, observed
-rate, confidence settings, detection counts, OS/package/model versions, and
-model/labels provenance. Record timing distributions only when measured; do
-not infer accuracy from confidence values or set an unmeasured FPS guarantee.
+Record OS/package/model versions, hashes, import origins, requested/actual frame
+size, startup/capture duration, successful frames, observed rate, thresholds,
+and report paths in [hardware.md](hardware.md). Check image colors and box
+alignment; missing model/config files, camera loss, timeout, headless use,
+and Ctrl+C must give useful errors and release resources. Verify the absence
+of a key, SDK, or network leaves local detection results available.
 
-| Check | Acceptance observation to record |
-| --- | --- |
-| Default sample | One frame, detector disabled, no camera/network/audio |
-| Fixture replay | Simulated marker, expected boxes/filtering, local image and JSON exports |
-| Real offline inference | 100 camera frames with model-aligned labels and image-aligned boxes; no cloud dependency |
-| Frame integrity | Pixel colors and box alignment checked visually against the controlled scene |
-| Config/model failures | Missing model/labels, wrong backend/source, invalid fixtures and thresholds fail clearly |
-| Camera loss/timeouts | Useful failure, bounded configured waits where supported, resources released |
-| Exit and headless use | Ctrl+C and normal exit release capture; `--no-preview` works without a desktop window |
-| Cloud absent/failing | Local predictions remain available with no key, no SDK, quota error, or timeout |
+No physical vidi capture/inference success, fixed accuracy, or achieved FPS is
+claimed. The current software suite has 351 passing tests and one sandboxed
+shared-memory skip; that test passed separately outside the sandbox, for 352
+validated tests. Dependency consistency passed. Mocked hardware/SDK tests and
+the actual Mac model-forward smoke test do not replace on-device acceptance.
 
-This list is a test procedure, not a completed result. Update
-[hardware.md](hardware.md) with actual observations and the report paths. Pi 5
-compatibility and wearable use require later physical checks.
+## Optional IMX500 profile
 
-## Optional one-shot Gemini demonstration
+Only a confirmed IMX500 sensor can use `config/pi-imx500.yaml` and its local
+`/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk`.
+The decoder accepts that baseline filename, with a 320×320 model contract;
+other networks require their own decoder. Labels come from an explicit file
+or embedded metadata. Missing usable labels fail clearly. Preserve blank/dash
+entries and class IDs rather than shifting an arbitrary COCO label mapping.
+Do not install IMX500 packages or download its model for the connected IMX708.
 
-The selected SDK path uses Google's current Gemini image-understanding API.
-The configured model is `gemini-3.5-flash-lite`; confirm access and the applicable
-free tier before relying on it. Keep the optional SDK lazy so local detection
-does not require it. An SDK install, API-project setup, and the first live
-upload are distinct approval steps; none is authorized by running local tests.
-On the Pi, review SDK dependencies separately and preserve the OS camera stack.
+References: [AI Camera documentation](https://www.raspberrypi.com/documentation/accessories/ai-camera.html),
+[model catalogue](https://github.com/raspberrypi/imx500-models), and the official
+[object detection example](https://github.com/raspberrypi/picamera2-examples/blob/main/examples/imx500/imx500_object_detection_demo.py).
 
-SDK 2.34.0 normalizes a zero retry setting during client initialization. The
-client restores the public `HttpOptions.retry_options.attempts` setting before
-constructing the lazy Interactions interface. Offline tests with the installed
-SDK verify exactly one request for successful, rate-limited, and server-error
-responses. Keep the tested SDK pin until these compatibility tests pass with a
-deliberately selected replacement. No private SDK attributes are modified.
+## Optional Gemini demonstration and approval boundaries
 
-The budget is **$0 new spending**. Use a verified free-tier API project with
-billing disabled; do not enable paid billing, purchase credits, or assume a
-Google AI Pro/student subscription includes API credits. Verify any student
-offer separately. If the selected model is unavailable without spending, skip
-the cloud demonstration and retain offline local detection.
+The approved Google SDK 2.34.0 was installed/tested locally on Mac using mocked
+HTTP and blocked sockets. No live Gemini API request or image upload has been
+approved or performed. API-project setup, current tier/terms review, and live
+image consent remain separate approval steps. The budget is **$0 new spending**:
+verify a free-tier project with billing disabled and chosen-model eligibility;
+otherwise skip cloud use. Do not assume Google AI Pro/student benefits provide
+API credits. Verify any credit offer separately.
 
-After approval, SDK setup, and a non-sensitive test image are ready, set
-`GEMINI_API_KEY` through a secure shell environment. `.env` files are not loaded
-automatically. Do not print the key or include it in commands committed to the
-repository. An example invocation, which makes a live upload when properly
-configured, is:
+`--describe` explicitly opts one run into one request after camera resources
+close. It sends the final unannotated frame, resized to a maximum 1024-pixel
+edge, and an optional typed question. `--question` requires `--describe`.
+Configuration alone never initiates a request. The model is
+`gemini-3.5-flash-lite`, timeout 15 seconds, and at most 256 output tokens.
+Set `GEMINI_API_KEY` securely; `.env` is not autoloaded. Never commit or log a
+key. Use a permitted, non-sensitive demonstration image; avoid personal
+papers and bystanders. Cloud text is separate from local predictions and is
+not spoken. Failures preserve local results. Do not enable continuous uploads.
 
-```sh
-python -m vidi --image artifacts/demo-input.png --detector none --describe --question "Briefly describe the scene." --report artifacts/demo-description.json
-```
-
-`--describe` is an explicit per-run opt-in. It sends the last unannotated frame
-after the capture context closes, with a maximum image edge of 1024 pixels,
-15-second configured request timeout, and at most 256 output tokens. Do not
-send annotated detection overlays as visual evidence. The response is text,
-identified as a cloud description separately from local model predictions;
-it does not trigger speech. Never turn this into continuous uploading.
-
-Use an image without personal documents, bystanders, or other sensitive content,
-and obtain permission for the demonstration image. Review current provider
-data-use terms and quotas with the project owner before the first request;
-free and paid tiers can have different treatment. Avoid logging prompts,
-images, credentials, or raw provider responses unnecessarily. Test cloud
-failure with mocks before any approved live call.
-
-The official [model page](https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite),
-[image-understanding guide](https://ai.google.dev/gemini-api/docs/image-understanding),
-[API overview](https://ai.google.dev/gemini-api/docs/interactions-overview),
-[billing documentation](https://ai.google.dev/gemini-api/docs/billing), and
-[API terms](https://ai.google.dev/gemini-api/terms) are the references to verify
-at setup time. For the demonstration, confirm the current criteria against the
-official [HackUMass prize list](https://www.hackumass.com/#prizes); no prize,
-eligibility, API credit, or award is assumed by the implementation.
-
-## Remaining approval and evidence gates
-
-Local software validation on November 14, 2026 used macOS arm64 and Python
-3.14.6: 259 tests passed and one real shared-memory test was skipped by the OS
-sandbox. That skipped test passed separately outside the restriction with a
-spawned fake worker, no camera access, and no network. Google SDK 2.34.0 passed
-offline request/response and single-attempt error tests with blocked sockets.
-Fixture image/JSON export, the installed CLI, dependency consistency, and
-whitespace checks also passed. No physical camera or live cloud result is
-represented by these software checks.
-
-The approved SDK download and local compatibility tests are complete. System
-package installation on the Pi, model/label transfer, paid service activation,
-and live image upload have not been performed. Obtain approval for each
-concrete proposed external action. After hardware acceptance, keep OCR, audio/voice,
-wearable integration, and performance claims in their later approved phases.
+Verify the current [model](https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite),
+[image guide](https://ai.google.dev/gemini-api/docs/image-understanding),
+[billing](https://ai.google.dev/gemini-api/docs/billing), and
+[data-use terms](https://ai.google.dev/gemini-api/terms) before a live request.
+Check demonstration criteria against the official
+[HackUMass prizes](https://www.hackumass.com/#prizes); no award or credit is assumed.
+OCR, speech, voice commands, wearable integration, and later performance claims
+remain outside this implementation. The prototype supplements established
+mobility aids and cannot provide precise distance or guaranteed navigation safety.

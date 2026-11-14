@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "vidi"
 version = "0.1.0"
-description = "Local AI Camera detection and optional scene descriptions for vidi smart glasses"
+description = "Local camera detection and optional scene descriptions for vidi smart glasses"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

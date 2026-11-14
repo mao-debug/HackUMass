@@ -136,7 +136,7 @@ class FrameCapture:
         font_scale = max(0.2, min(width / 1000, height / 600))
         cv2.putText(
             frame,
-            "SYNTHETIC SAMPLE - NO INFERENCE",
+            "SYNTHETIC SAMPLE - NOT A REAL SCENE",
             (max(2, width // 30), max(10, height // 9)),
             cv2.FONT_HERSHEY_SIMPLEX,
             font_scale,

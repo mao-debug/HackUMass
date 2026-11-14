@@ -150,7 +150,7 @@ def test_empty_mapping_uses_defaults(tmp_path):
         "camera: []\n",
         "simulation: false\n",
         "models: null\n",
-        "camera:\n  source: picamera2\n",
+        "camera:\n  source: unsupported\n",
         "camera:\n  source: image\n",
         "camera:\n  source: 1\n",
         "camera:\n  image_path: 123\n",

@@ -42,7 +42,7 @@ def _optional_path(name: str, value: Any) -> None:
 
 @dataclass(frozen=True)
 class CameraSettings:
-    """Portable inputs plus the explicitly selected Pi AI Camera adapter."""
+    """Portable inputs and explicitly selected Raspberry Pi camera adapters."""
 
     source: str = "sample"
     image_path: Path | None = None
@@ -54,8 +54,8 @@ class CameraSettings:
     capture_timeout_s: float = 5.0
 
     def __post_init__(self) -> None:
-        if self.source not in ("sample", "image", "webcam", "imx500"):
-            raise ConfigurationError("camera.source must be sample, image, webcam, or imx500.")
+        if self.source not in ("sample", "image", "webcam", "picamera2", "imx500"):
+            raise ConfigurationError("camera.source must be sample, image, webcam, picamera2, or imx500.")
         _optional_path("camera.image_path", self.image_path)
         if self.source == "image" and self.image_path is None:
             raise ConfigurationError("camera.image_path is required for source=image.")
@@ -130,6 +130,7 @@ class ModelSettings:
 
     object_detection_backend: str | None = None
     object_detection_path: Path | None = None
+    object_detection_config_path: Path | None = None
     scene_description_backend: str | None = None
     ocr_backend: str | None = None
     speech_recognition_backend: str | None = None
@@ -209,8 +210,13 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
 def validate_runtime_settings(settings: AppSettings, *, describe: bool = False) -> None:
     """Check backend combinations after command-line overrides are applied."""
     backend = settings.models.object_detection_backend or "none"
-    if backend not in ("none", "imx500", "fixture"):
-        raise ConfigurationError("Object detector must be none, imx500, or fixture.")
+    if backend not in ("none", "imx500", "opencv_ssd", "fixture"):
+        raise ConfigurationError("Object detector must be none, imx500, opencv_ssd, or fixture.")
+    if backend == "opencv_ssd":
+        if settings.camera.source == "imx500":
+            raise ConfigurationError("Use --source picamera2 for CPU detection on a Raspberry Pi camera.")
+        if settings.models.object_detection_path is None or settings.models.object_detection_config_path is None:
+            raise ConfigurationError("The opencv_ssd detector requires local --model and --model-config paths.")
     if backend == "imx500":
         if settings.camera.source != "imx500":
             raise ConfigurationError("The imx500 detector requires --source imx500.")
