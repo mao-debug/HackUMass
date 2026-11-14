@@ -9,7 +9,7 @@ equipment has passed an integration test.
 | Current computer | Raspberry Pi 4 | Available | Debian 12, aarch64, Python 3.11.2 confirmed; RAM/board revision to record |
 | Existing desktop access | Partner's monitor and keyboard | Connected to the Pi | Use direct desktop/GitHub or USB handoff; preserve the existing installation |
 | Requested computer | Raspberry Pi 5, 8 GB RAM | Requested; unverified | Delivery and compatible power supply to verify |
-| Connected camera | Camera Module 3, IMX708 | Capture verified in supplied Pi logs | Two runs of 3 frames at 640×480; image appearance and CPU detection still to verify |
+| Connected camera | Camera Module 3, IMX708 | Capture and CPU inference verified in supplied Pi logs | 20 live frames at 640×480, all inference-ready; visual alignment still to verify |
 | Optional AI Camera | IMX500 | Not confirmed as connected | Earlier planned backend remains optional; verify a separate sensor before using its profile |
 | Storage | Installed microSD card | In use | Preserve Debian installation/files; capacity and available space to record |
 | Portable power | Power bank | To verify | Output capability, runtime, cable, and board compatibility to verify |
@@ -50,8 +50,9 @@ microSD card rather than overwriting the current installation.
 
 ## Bench record
 
-The supplied Pi terminal output confirms camera capture at commit `827577d`.
-Full detection acceptance remains pending. Continue filling in this record:
+The supplied Pi terminal output confirms camera capture at commit `827577d`
+and a later 20-frame live CPU detection run. Visual recognition checks and
+longer offline acceptance remain pending. Continue filling in this record:
 
 | Field | Observed value |
 | --- | --- |
@@ -62,12 +63,24 @@ Full detection acceptance remains pending. Continue filling in this record:
 | Camera enumeration | rpicam/libcamera report IMX708 |
 | vidi camera-only capture | Passed twice: 3 frames per run at 640×480; `source=picamera2`, `detector=none`, no reported errors |
 | Image export and visual inspection | Saved to `/home/simaofea/vidi/artifacts/pi-camera.png`; image contents, orientation, and colors not yet inspected |
-| CPU model assets | Fixed-commit author files downloaded/tested locally on Mac; transfer or approved download to Pi still required |
-| CPU model load/forward | Passed on Mac synthetic frame with zero detections; not a Pi or accuracy test |
-| Camera startup time and requested/actual frame size | Startup duration not measured; requested and delivered 640×480 |
+| CPU model assets | Approved downloads completed on Pi; checksum verification output not supplied |
+| CPU model load/forward | Passed on Pi saved camera image: 1 ready frame, zero detections; Mac synthetic smoke also passed |
+| Live camera and CPU inference | 20 frames, 20 ready, 0 not ready; backend `opencv_ssd`, source `picamera2`, simulated `false` |
+| Final-frame prediction | Class 15 `person`, model score 0.653709; box `[517, 192, 640, 466]`, at the image's right edge; correctness not visually confirmed |
+| Camera startup time and requested/actual frame size | Reported camera-worker startup 3.386 s; requested and delivered 640×480 |
+| 20-frame processing timing | Processing loop 13.260 s, approximately 1.51 frames/s including initial frame wait; camera startup, model loading, teardown, and export excluded |
+| Reported frame-interval rates | `capture_fps` and `inference_ready_fps` both 2.00015; based on capture timestamps, not isolated model inference timing |
+| Live output artifacts | `/home/simaofea/vidi/artifacts/pi-live-detections.png` and `pi-live.json` saved |
+| Image viewer | `eom` emitted missing Peas/PeasGtk typelib warnings after vidi completed; image display and box alignment not confirmed |
 | 100-frame offline report and observed processing rate | Not run |
 | Missing model, unplugged camera, and interruption cleanup | Not tested |
 | Optional one-shot cloud test, project tier, terms review | Not authorized or run |
+
+The model score is not measured recognition accuracy. The reported interval
+rates use `(frame_count - 1) / (last_capture_time - first_capture_time)`;
+they omit the initial wait for a frame and the final frame's inference work.
+Processing throughput uses `frame_count / processing_s` instead. The requested
+2 FPS run limit also means this is not a maximum-speed detector benchmark.
 
 Use controlled bench scenes before wearable trials. The prototype supplements
 established mobility aids and cannot guarantee obstacle coverage, precise

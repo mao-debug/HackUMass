@@ -11,9 +11,10 @@ The target is a Raspberry Pi 4 running Debian 12, aarch64, Python 3.11.2,
 NumPy 1.24.2, PyYAML 6, setuptools 66, Picamera2 0.3.27, and installed OS OpenCV
 4.6.0. rpicam reports IMX708. The monitor and keyboard are connected. The
 supplied terminal output at commit `827577d` also confirms two camera-only
-runs of 3 frames at 640×480 and successful image export. Image appearance and
-CPU detection on the Pi remain unchecked. The requested Pi 5 with 8 GB RAM
-remains unverified.
+runs of 3 frames at 640×480 and successful image export. A later run processed
+20 live frames with CPU inference ready on all 20 and a final-frame `person`
+prediction. Image appearance and box alignment remain unchecked. The requested
+Pi 5 with 8 GB RAM remains unverified.
 
 Use the existing GitHub branch handoff or transfer the source by USB and open
 a terminal in the repository root. SSH setup is not required. Read-only checks:
@@ -72,7 +73,9 @@ The first command checks model loading, forward execution, and decoding on a
 synthetic frame. It already passed locally on Mac with zero detections; this
 is not an accuracy measurement or a Pi result. `config/pi.yaml` selects
 `picamera2` plus `opencv_ssd`, requests 640×480, a 2 FPS loop limit, and 20
-frames. Actual Pi processing rate is unmeasured. Model paths in that YAML start
+frames. The supplied Pi report shows 20 live frames processed in 13.26 seconds
+(about 1.51 frames/s including the initial frame wait), with about 2.00 FPS
+between capture timestamps. Model paths in that YAML start
 `../models/` because they resolve relative to `config/`.
 
 The decoder follows the author's 300×300 BGR preprocessing and class ordering.
@@ -157,9 +160,14 @@ alignment; missing model/config files, camera loss, timeout, headless use,
 and Ctrl+C must give useful errors and release resources. Verify the absence
 of a key, SDK, or network leaves local detection results available.
 
-The supplied Pi logs confirm camera-only capture and export in two short runs.
-Pi inference, recognition accuracy, and achieved FPS remain unverified. The
-current software suite has 351 passing tests and one sandboxed
+The supplied Pi logs confirm camera-only capture/export and a 20-frame live
+CPU inference run, with all 20 frames ready and a final-frame `person` prediction
+(score 0.654). Camera-worker startup was 3.386 seconds; processing was 13.260
+seconds. The report's 2.00015 FPS rates use capture timestamp intervals, whereas
+20 / 13.260 gives about 1.51 frames/s over the full processing loop. Neither
+measures isolated inference latency or maximum detector speed; the run requests
+a 2 FPS limit. Visual accuracy and the longer offline acceptance remain pending.
+The current software suite has 351 passing tests and one sandboxed
 shared-memory skip; that test passed separately outside the sandbox, for 352
 validated tests. Dependency consistency passed. Mocked hardware/SDK tests and
 the actual Mac model-forward smoke test do not replace on-device acceptance.

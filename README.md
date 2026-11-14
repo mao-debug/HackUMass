@@ -93,9 +93,10 @@ partner's monitor and keyboard are connected. **Preserve this installation.**
 The Pi 5 with 8 GB RAM is requested and unverified. The active camera's IMX708
 sensor is not IMX500; do not use an IMX500 model with it.
 
-Supplied Pi logs at commit `827577d` confirm two camera-only runs of 3 frames
-at 640×480, with successful image export. Image appearance and Pi detection
-still need verification; see the [bench record](docs/hardware.md).
+Supplied Pi logs confirm two camera-only runs and a 20-frame live CPU detection
+run at 640×480. All 20 live frames were inference-ready; the final frame reported
+`person` with model score 0.654. Visual correctness and longer offline acceptance
+remain pending; see the [bench record](docs/hardware.md).
 
 Work from the repository root after the existing GitHub branch handoff or a
 USB source transfer; no SSH setup is required. With the confirmed system
@@ -125,10 +126,12 @@ live test:
 .venv-pi/bin/python -m vidi --config config/pi.yaml --max-frames 20 --no-preview --output artifacts/pi-detections.png --report artifacts/pi-cpu.json
 ```
 
-`config/pi.yaml` requests 640×480 at a 2 FPS loop limit; actual CPU rate is
-unmeasured. The later 100-frame offline bench procedure is in
-[docs/phase2.md](docs/phase2.md). No live-detection success, accuracy, or achieved
-FPS is claimed here. Missing local build prerequisites should be reported
+`config/pi.yaml` requests 640×480 at a 2 FPS loop limit. The supplied 20-frame
+Pi report shows about 2.00 FPS between capture timestamps and 13.26 seconds for
+the full processing loop (about 1.51 frames/s including the initial frame wait).
+These are different timing windows, not an isolated model-speed or accuracy
+measurement. The later 100-frame offline bench procedure is in
+[docs/phase2.md](docs/phase2.md). Missing local build prerequisites should be reported
 before adding packages; the source-tree command above remains available.
 
 ## Optional Gemini demonstration
@@ -181,8 +184,8 @@ module origins, OS identity, and possible camera device paths without importing
 optional packages, opening devices, recording audio, or accessing the network.
 Distribution metadata may be absent for an apt-provided module. Discovery alone
 does not verify native ABI compatibility, camera capture, inference, or audio.
-Camera capture is
-recorded separately in [docs/hardware.md](docs/hardware.md); detection and audio
+Camera capture and live CPU inference are recorded separately in
+[docs/hardware.md](docs/hardware.md); visual detection validation and audio
 acceptance remain pending. Tests use fixtures and mocked hardware/cloud
 boundaries; they do not replace Pi acceptance tests.
 
