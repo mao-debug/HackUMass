@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 
 if TYPE_CHECKING:
-    from visionbridge.core.configuration import CameraSettings
+    from vidi.core.configuration import CameraSettings
 
 logger = logging.getLogger(__name__)
 

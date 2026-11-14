@@ -16,7 +16,7 @@ SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "check_hardware.py"
 
 @pytest.fixture
 def hardware_module():
-    spec = importlib.util.spec_from_file_location("visionbridge_hardware_check", SCRIPT)
+    spec = importlib.util.spec_from_file_location("vidi_hardware_check", SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -85,7 +85,7 @@ def test_text_cli_is_readable(hardware_module, monkeypatch, capsys):
     monkeypatch.setattr(hardware_module.shutil, "which", lambda name: None)
     assert hardware_module.main([]) == 0
     output = capsys.readouterr().out
-    assert "VisionBridge local prerequisite report" in output
+    assert "vidi local prerequisite report" in output
     assert "Physical camera: unverified" in output
     assert "Physical microphone: unverified" in output
     assert "Physical audio output: unverified" in output

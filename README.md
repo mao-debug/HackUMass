@@ -1,6 +1,6 @@
-# VisionBridge
+# vidi
 
-VisionBridge is a HackUMass smart glasses prototype for blind and visually
+vidi is a HackUMass smart glasses prototype for blind and visually
 impaired users. Its planned capabilities are object detection, short scene
 descriptions, OCR, speech output, voice commands, and obstacle awareness.
 
@@ -44,25 +44,25 @@ From the repository root, with the virtual environment active:
 
 ```sh
 # Process one synthetic frame; no camera or desktop display is needed.
-python -m visionbridge
+python -m vidi
 
 # Use the repository's YAML configuration explicitly.
-python -m visionbridge --config config/settings.yaml
+python -m vidi --config config/settings.yaml
 
 # Export the final synthetic frame to a local file.
-python -m visionbridge --output artifacts/sample.png
+python -m vidi --output artifacts/sample.png
 
 # Reuse that file as an image input.
-python -m visionbridge --image artifacts/sample.png
+python -m vidi --image artifacts/sample.png
 
 # Opt into webcam access and a preview for a bounded run.
-python -m visionbridge --source webcam --camera-index 0 --max-frames 60 --preview
+python -m vidi --source webcam --camera-index 0 --max-frames 60 --preview
 
 # Show all options.
-python -m visionbridge --help
+python -m vidi --help
 ```
 
-The installed `visionbridge` command is equivalent to `python -m visionbridge`.
+The installed `vidi` command is equivalent to `python -m vidi`.
 Without `--config`, built-in defaults match `config/settings.yaml` and work
 from any directory after installation. Paths supplied on the command line are
 relative to the terminal's current directory. Paths inside a YAML file are
@@ -119,7 +119,7 @@ output operation remain explicitly **unverified**. Track actual equipment and in
 
 ## Troubleshooting
 
-- **`No module named visionbridge` or missing dependencies:** activate `.venv`
+- **`No module named vidi` or missing dependencies:** activate `.venv`
   and complete the editable installation using the same `python` interpreter.
 - **Camera unavailable:** check the webcam index and connection. On macOS,
   enable camera access for the terminal or VS Code in **System Settings >
@@ -134,7 +134,7 @@ output operation remain explicitly **unverified**. Track actual equipment and in
 
 ## Project layout
 
-The existing repository root is the VisionBridge project; no nested checkout is
+The existing repository root is the vidi project; no nested checkout is
 needed.
 
 ```text
@@ -147,7 +147,7 @@ needed.
 ├── .gitignore
 ├── config/settings.yaml
 ├── docs/hardware.md
-├── src/visionbridge/
+├── src/vidi/
 │   ├── __init__.py
 │   ├── __main__.py
 │   ├── main.py

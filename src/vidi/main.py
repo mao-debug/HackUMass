@@ -7,16 +7,16 @@ import logging
 from dataclasses import replace
 from pathlib import Path
 
-from visionbridge import __version__
-from visionbridge.core.configuration import ConfigurationError, load_settings
+from vidi import __version__
+from vidi.core.configuration import ConfigurationError, load_settings
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Describe only available Phase 1 capabilities."""
     parser = argparse.ArgumentParser(
-        description="VisionBridge Phase 1: local simulation, without AI inference or audio."
+        description="vidi Phase 1: local simulation, without AI inference or audio."
     )
-    parser.add_argument("--version", action="version", version=f"VisionBridge {__version__}")
+    parser.add_argument("--version", action="version", version=f"vidi {__version__}")
     parser.add_argument("--config", type=Path, help="YAML path; omitted means built-in defaults")
     parser.add_argument("--source", choices=("sample", "image", "webcam"))
     parser.add_argument("--image", type=Path, help="Image path (selects image unless --source is given)")
@@ -63,8 +63,8 @@ def main(argv: list[str] | None = None) -> int:
         logging.basicConfig(level=settings.log_level, format="%(levelname)s: %(message)s")
 
         # Keep --help/--version available even if OpenCV has not been installed.
-        from visionbridge.camera.capture import CaptureError
-        from visionbridge.core.controller import SimulationError, run_simulation
+        from vidi.camera.capture import CaptureError
+        from vidi.core.controller import SimulationError, run_simulation
 
         try:
             run_simulation(settings)

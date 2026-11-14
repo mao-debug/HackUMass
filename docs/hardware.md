@@ -1,4 +1,4 @@
-# VisionBridge hardware inventory
+# vidi hardware inventory
 
 Record exact models, quantities, connections, and test results as equipment is
 verified. The statuses below reflect the project information supplied so far;

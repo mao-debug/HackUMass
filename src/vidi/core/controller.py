@@ -11,11 +11,11 @@ from pathlib import Path
 
 import cv2
 
-from visionbridge.camera.capture import CaptureError, FrameCapture
-from visionbridge.core.configuration import AppSettings
+from vidi.camera.capture import CaptureError, FrameCapture
+from vidi.core.configuration import AppSettings
 
 logger = logging.getLogger(__name__)
-WINDOW_TITLE = "VisionBridge - simulation only (q/Esc to exit)"
+WINDOW_TITLE = "vidi - simulation only (q/Esc to exit)"
 
 
 class SimulationError(RuntimeError):

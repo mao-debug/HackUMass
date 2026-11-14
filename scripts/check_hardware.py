@@ -81,7 +81,7 @@ def format_report(report: dict[str, Any]) -> str:
     """Format a concise human-readable inventory of discovery results."""
     system = report["system"]
     lines = [
-        "VisionBridge local prerequisite report",
+        "vidi local prerequisite report",
         f"OS: {system['os']} {system['release']}",
         f"Architecture: {system['architecture']}",
         f"Python: {system['python']} ({system['python_executable']})",

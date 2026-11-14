@@ -6,10 +6,10 @@ import cv2
 import numpy as np
 import pytest
 
-from visionbridge.camera.capture import CaptureError
-from visionbridge.core import controller
-from visionbridge.core.configuration import AppSettings, CameraSettings, SimulationSettings
-from visionbridge.core.controller import SimulationError, run_simulation
+from vidi.camera.capture import CaptureError
+from vidi.core import controller
+from vidi.core.configuration import AppSettings, CameraSettings, SimulationSettings
+from vidi.core.controller import SimulationError, run_simulation
 
 
 def install_capture(monkeypatch, frames):
