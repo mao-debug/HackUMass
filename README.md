@@ -6,9 +6,9 @@ card**. The connected camera reports **IMX708 (Camera Module 3)**. Phase 2
 uses Picamera2 capture and local OpenCV DNN CPU detection with MobileNet-SSD.
 The separate IMX500 AI Camera backend remains optional for that different
 sensor. macOS supports fixture replay. Explicit one-shot Gemini object detection
-and scene descriptions are optional cloud demonstrations. Phase 3 adds local OCR
-and a short speech response or WAV export. Voice commands remain deferred.
-Pi OCR and audio acceptance are pending; the audio output device is unverified.
+and scene descriptions are optional cloud demonstrations. Phase 3 adds Gemini
+or local OCR and a short local speech response or WAV export. Gemini OCR and
+audible speech have passed a user-run Pi 5 check. Voice commands remain deferred.
 
 The default run processes one synthetic sample frame with detection disabled.
 It opens no camera or preview, loads no model, makes no network request, and
@@ -151,10 +151,11 @@ index 0. A subsequent camera-only application run processed **282 frames at
 preview. This is the application delivery rate, not a sensor-speed guarantee.
 That run printed nonfatal libpng/GLib messages. Gemini live identification then
 processed **684 frames at 23.43 FPS**, with **four successful responses and zero
-unavailable results**. The user confirmed hearing the Pi 5 eSpeak test word.
-Image colors/clarity, prediction accuracy, power/thermals, and integrated OCR
-read-aloud still need confirmation. No package reinstallation is indicated by
-the supplied results.
+unavailable results**. The user confirmed hearing the Pi 5 eSpeak test word,
+then completed Gemini reading with **OCR=ready, speech=completed** and heard the
+spoken excerpt. The report was saved to `artifacts/pi5-gemini-speaking.json`.
+Image colors/clarity, recognition accuracy, and power/thermals still need
+confirmation. No package reinstallation is indicated by the supplied results.
 
 The recorded **Pi 4 baseline** runs Debian 12, aarch64, Python 3.11.2, NumPy 1.24.2,
 PyYAML 6, setuptools 66, Picamera2 0.3.27, and installed OS OpenCV 4.6.0. The
@@ -249,7 +250,7 @@ enable none of these actions.
 The Pi OCR profile requests one 1280×960 frame, a one-second settling interval,
 and a supported single autofocus cycle with a four-second wait limit. Camera
 startup/capture remain bounded at 30/five seconds. Autofocus does not guarantee
-readable text. After the pending OCR/speech package installation is approved
+readable text. After the pending Tesseract package installation is approved
 and completed, run from the repository root:
 
 ```sh
@@ -272,7 +273,8 @@ text remains available in an explicitly requested JSON report. Speech status
 
 The Mac has native `say`, but Tesseract is not installed. Pi `espeak-ng` and its
 required dependencies are approved from the configured OS apt repositories;
-installation and audible playback are not yet verified. Approval is still
+the Pi 5 reports the engine installed, and the user heard both its test word
+and a Gemini OCR excerpt. Approval is still
 pending for Homebrew Tesseract on Mac and Pi `tesseract-ocr`/
 `tesseract-ocr-eng`. No Python OCR/TTS wrapper is needed.
 After setup, a local-image Mac run uses the existing desktop environment:
@@ -386,8 +388,9 @@ optional packages, opening devices, recording audio, or accessing the network.
 Distribution metadata may be absent for an apt-provided module. Discovery alone
 does not verify native ABI compatibility, camera capture, inference, or audio.
 Camera capture and live CPU inference are recorded separately in
-[docs/hardware.md](docs/hardware.md); broader detection validation and audio
-acceptance remain pending. Phase 3 OCR/audio hardware checks have not yet run.
+[docs/hardware.md](docs/hardware.md). Pi 5 Gemini OCR and an audible local speech
+excerpt passed a user-run check; broader recognition accuracy, offline
+Tesseract, and optional neural voice checks remain pending.
 Tests use fixtures and mocked hardware/cloud
 boundaries; they do not replace Pi acceptance tests.
 
@@ -417,8 +420,9 @@ scaffolding. `config/`, `examples/`, `scripts/`, `tests/`, and `docs/` hold
 configuration, fixtures, diagnostics, verification, and setup notes.
 
 Phase 1 established the foundation. Phase 2 covers camera/detection plus the
-explicit one-shot Gemini demonstrations described above. Phase 3 adds requested local
-OCR and speech; its installation and hardware acceptance remain pending.
+explicit one-shot Gemini demonstrations described above. Phase 3 adds requested
+Gemini or local OCR and local speech. Gemini reading with audible eSpeak output
+has passed on Pi 5; offline Tesseract setup and acceptance remain pending.
 Voice commands and wearable deployment/optimization remain later work.
 Model class coverage is limited to the selected model's labels; an empty
 detection list is not evidence that a path is clear. The full plan, official

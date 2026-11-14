@@ -10,8 +10,10 @@ verified. IMX708 enumerates at camera index 0. The camera-only preview captured
 after q. A subsequent Gemini live run captured 684 frames at **23.43 FPS**,
 with four HTTP 200 replies, four successful analyses, and zero unavailable
 results. The user separately confirmed hearing the local eSpeak test word on
-Pi 5. **Image colors/clarity, recognition accuracy, power/thermal behavior,
-local-model inference, and integrated OCR/audio remain pending.**
+Pi 5, then completed Gemini OCR with HTTP 200, `OCR=ready`, and
+`speech=completed` and confirmed hearing the reading. **Image colors/clarity,
+recognition accuracy, power/thermal behavior, local-model inference, and the
+optional neural voice remain pending.**
 
 Discovery reports NumPy 1.24.2, PyYAML 6, setuptools 66.1.1, Google SDK
 2.34.0, and Picamera2 0.3.31. The earlier Pi 4 record had Picamera2 0.3.27 and
@@ -170,8 +172,9 @@ Follow [Phase 3 audio checks](phase3.md#bluetooth-headphones-on-the-pi) and
 Raspberry Pi's [audio guide](https://pip-assets.raspberrypi.com/categories/1259-audio-camera-and-display/documents/RP-008124-WP/Choosing-an-Audio-option.pdf).
 The user reported audible speech on the previous board but described its voice
 as robotic. On the Pi 5, the user subsequently confirmed hearing
-`espeak-ng vidi` after the headphone/output check. This passes the basic local
-audio test; integrated OCR read-aloud and voice quality are separate checks.
+`espeak-ng vidi` after the headphone/output check, then heard the integrated
+Gemini OCR reading. This passes both the basic local audio and integrated
+read-aloud checks; voice quality remains a separate check.
 The current report finds eSpeak NG, paplay, pw-play, aplay, pactl, and wpctl;
 their presence does not verify an active server, selected output, or audibility.
 eSpeak NG installation was approved. Missing diagnostic tools do not authorize
@@ -211,10 +214,18 @@ Add `--speak` only for an explicit local speech request after headphone output
 works. No speech-generation API is used. Keep OCR recognition, speech-engine
 completion, and actual audibility as separate acceptance results.
 
+The user completed the reading with `--speak` and
+`--report artifacts/pi5-gemini-speaking.json`. The supplied log shows HTTP 200,
+`OCR=ready`, and `speech=completed`; the user confirmed hearing the excerpt. Gemini
+returned the MLH Hack Days flyer text, with partial lines near the bottom.
+This verifies the capture-to-reading workflow and audible local speech;
+complete transcription accuracy was not checked against the source.
+
 ## Pi 5 acceptance record
 
 Identity/discovery, enumeration, camera-only preview, Gemini live identification,
-and basic local speech now have supplied evidence. Other checks remain pending.
+Gemini OCR, and audible local reading now have supplied evidence. Other checks
+remain pending.
 The full record is in
 [hardware.md](hardware.md#pi-5-migration-record). Earlier Pi 4 measurements do
 not transfer to Pi 5.
@@ -230,6 +241,7 @@ not transfer to Pi 5.
 | Image quality and exports | Colors/clarity pending; image/report exports requested without reported error, contents not independently inspected |
 | Supply/cable, cooling, temperatures and throttle flags | Pending |
 | Audible local speech | Passed by user confirmation: heard `espeak-ng vidi` on Pi 5 after checking headphones/output |
-| Integrated OCR read-aloud and neural voice | Pending |
+| Integrated Gemini OCR read-aloud | Passed: HTTP 200, `OCR=ready`, `speech=completed`, and user heard the spoken excerpt; `artifacts/pi5-gemini-speaking.json` saved; complete transcription accuracy not verified |
+| Optional neural voice | Pending separate download approval and bench verification |
 | Gemini live identification | Passed: 684 frames, measured 23.43 FPS, 4 successful responses/HTTP 200, 0 unavailable; prediction accuracy not independently verified |
-| Optional local detection and Gemini OCR read-aloud | Pending |
+| Optional local detection | Pi 5 inference pending |

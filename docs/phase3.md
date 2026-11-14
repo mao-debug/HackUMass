@@ -10,15 +10,17 @@ for reading the image, not for generating audio.
 The current target is a Pi 5 using the previous Pi 4 SD card. The recorded
 Pi 4 baseline used Camera Module 3/IMX708, Debian 12, Python 3.11.2,
 Picamera2 0.3.27, and OS OpenCV 4.6.0. Preserve the installation and follow the
-[Pi 5 migration checks](pi5-migration.md) to verify the camera and audio on
+[Pi 5 migration checks](pi5-migration.md) for the camera and audio results on
 the new board. Phase 2 camera/person checks are recorded in
 [hardware.md](hardware.md); the longer detection bench and broader chair
-checks are independent of trying OCR. The supplied Pi Gemini run returned
-HTTP 200 and `OCR=ready` with printed text; that run did not request speech.
-The user subsequently reported audible speech and described the voice as
-robotic. Controlled headphone routing, complete read-aloud accuracy, and the
-optional neural voice still need bench verification. Pi eSpeak NG installation
-is approved; Tesseract package approval is still pending.
+checks are independent of trying OCR. The latest Pi 5 Gemini reading returned
+HTTP 200, `OCR=ready`, and `speech=completed`; the user confirmed hearing the
+spoken excerpt. Its report was saved to `artifacts/pi5-gemini-speaking.json`. The MLH
+flyer transcription includes partial lines near the bottom; complete accuracy
+has not been checked against the source. The user previously described the
+eSpeak voice as robotic. The optional neural voice still needs separate
+download approval and bench verification. Pi eSpeak NG installation is
+approved; Tesseract package approval is still pending.
 Gemini reading can use the existing SDK and saved key
 without either local OCR or speech executable.
 
@@ -92,7 +94,8 @@ An optional local Piper voice and camera-free audition are described in
 
 ## Bluetooth headphones on the Pi
 
-Pairing and audible output still need to be checked on the connected desktop:
+The user confirmed audible output on the Pi 5, including a Gemini OCR excerpt.
+For a new device or a lost connection, use the connected desktop:
 
 1. Put the headphones into their pairing/discoverable mode.
 2. Click the Pi desktop's Bluetooth icon, enable Bluetooth if needed, choose
@@ -112,9 +115,10 @@ Check speech-engine availability without playing anything:
 command -v espeak-ng
 ```
 
-The user's check printed no path: eSpeak NG is missing. Its approved installation
-steps are below; completion and playback still need verification. If pairing or
-routing is unclear, these read-only checks identify tools already present:
+An earlier check found no eSpeak NG, but the latest Pi 5 report finds
+`/usr/bin/espeak-ng`, and the user confirmed hearing the test word and OCR
+excerpt. No reinstall is needed for this working setup. If pairing or routing
+is unclear, these read-only checks identify tools already present:
 
 ```sh
 command -v bluetoothctl pactl wpctl
@@ -130,8 +134,9 @@ that the headphones played sound.
 ## Local engine setup and approvals
 
 The Pi's `espeak-ng` package and required dependencies from its configured
-Debian/Raspberry Pi OS apt repositories are approved. Run these steps on the
-Pi, then check the engine version; no installation has been run by this agent:
+Debian/Raspberry Pi OS apt repositories are approved. The current Pi 5 already
+has working eSpeak NG. Only if it is absent on another installation, run these
+steps on the Pi, then check the engine version:
 
 ```sh
 sudo apt update
@@ -289,13 +294,19 @@ Missing executable/language data, process failures, and timeouts must be
 reported as such. Neither an empty OCR result nor any spoken text establishes
 that navigation is safe.
 
-## Controlled acceptance still to run
+## Acceptance results and remaining checks
 
-Start with the text-only Gemini command and a controlled printed page. Record
+The user-run Pi 5 Gemini OCR and local speech check passed: HTTP 200,
+`OCR=ready`, `speech=completed`, and the user heard the excerpt. Its report is
+`artifacts/pi5-gemini-speaking.json`. This is functional workflow evidence;
+complete transcription accuracy and page coverage were not measured, and
+speech remains capped at 60 words.
+
+For controlled recognition checks, use the text-only Gemini command and a
+printed page. Record
 the command, saved source image, actual transcription, model, elapsed time,
 and report. Check a successful empty scene separately from a cloud failure or
 timeout: unavailable recognition must not be reported as “no readable text.”
-No on-device Gemini OCR acceptance result is claimed yet.
 
 After the corresponding local package approval and installation, record the
 actual Pi command, requested/delivered image dimensions, printed ground truth, recognized text,
@@ -311,6 +322,7 @@ real-engine tests generate English sign images for Tesseract and synthesize a
 WAV with eSpeak NG without playback. They explicitly skip when the respective
 engine is absent; no engine is downloaded by a test or application startup.
 Cloud tests use mocked responses and do not establish on-device recognition
-quality. No new on-device OCR or audio acceptance result is claimed here.
+quality. The Pi 5 functional result above comes from the user's actual run;
+offline Tesseract and optional neural voice acceptance remain pending.
 This prototype supplements established mobility aids and does not provide precise distance
 measurements or guaranteed navigation safety.

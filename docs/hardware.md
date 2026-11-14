@@ -16,7 +16,7 @@ equipment has passed an integration test.
 | Portable power | Power bank | To verify | Output capability, runtime, cable, and board compatibility to verify |
 | Pi 5 bench power/cooling | Suitable USB-C supply/cable and cooling | To verify | Record supply profile, fan/heatsink, temperatures, warnings, and throttle flags before sustained work |
 | Voice input | Microphone | To source or verify | Deferred from Phase 2; interface, quality, and placement unverified |
-| Speech output | Bluetooth headphones | Pi 5 basic speech test passed by user confirmation | User heard `espeak-ng vidi` on the new board; full OCR read-aloud and optional neural voice still need checking |
+| Speech output | Bluetooth headphones | Pi 5 test word and Gemini OCR read-aloud passed by user confirmation | User heard `espeak-ng vidi` and the subsequent printed-text reading; optional neural voice remains pending |
 | Wearable mounting | Glasses frame and camera accessories | To verify | Fit, attachment, field of view, and cable strain relief to check |
 | Activation input | Optional pushbutton | Optional; unverified | Wiring and software integration deferred |
 
@@ -39,9 +39,10 @@ enumerate the sensor, and run camera-only preview before inference. Pi 5
 identity, enumeration, and camera-only preview are confirmed. Measured preview
 rate was 21.79 FPS in the camera-only check. A subsequent Gemini live run
 captured 684 frames at 23.43 FPS with four successful responses and no
-unavailable results. The user also confirmed hearing the Pi 5 eSpeak test word.
-Image quality, recognition accuracy, power/thermal behavior, local-model
-inference, and integrated OCR read-aloud remain pending.
+unavailable results. The user also confirmed hearing the Pi 5 eSpeak test word
+and a subsequent Gemini OCR reading, which reported `OCR=ready` and
+`speech=completed`. Image quality, recognition accuracy, power/thermal behavior,
+local-model inference, and the optional neural voice remain pending.
 
 Run the read-only prerequisite report before making changes:
 
@@ -137,7 +138,9 @@ OpenCV/NumPy processing, and preview path.
 | Gemini live identification | 684 camera frames, measured 23.43 FPS, 4 successful analyses, 0 unavailable results; four HTTP 200 replies |
 | Gemini returned predictions | Frame 1: ceiling/light fixture/vent/light; frame 229: person/light; frame 377: marker/person; frame 569: cell phone/person. These are model outputs, not independently checked ground truth. |
 | Gemini live warnings/completion | Repeated libpng iCCP warnings remained nonfatal; run completed normally with the final capture summary |
-| Pending acceptance | Exact OpenCV version, image colors/clarity and exported-file inspection, recognition accuracy, local inference, supply/temperature/throttle checks, and integrated OCR read-aloud |
+| Gemini OCR and local speech | HTTP 200, `OCR=ready`, `speech=completed`; user confirmed hearing the spoken excerpt; report saved to `artifacts/pi5-gemini-speaking.json` |
+| OCR transcription observations | MLH Hack Days flyer text was returned, with partial lines near the bottom; complete transcription accuracy was not checked against the source |
+| Pending acceptance | Exact OpenCV version, image colors/clarity and exported-file inspection, recognition accuracy, local inference, supply/temperature/throttle checks, and optional neural voice |
 
 Continue with the remaining checks in the
 [migration checklist](pi5-migration.md#pi-5-acceptance-record). Keep all Pi 4
