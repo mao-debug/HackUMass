@@ -1,6 +1,6 @@
-# ClearAhead
+# HackUMass
 
-ClearAhead is an assistive device prototype that uses sensors and a camera to detect low-hanging obstacles and warn people who are blind or have low vision.
+"name of project" is an assistive device prototype that uses sensors and a camera to detect low-hanging obstacles and warn people who are blind or have low vision.
 
 ## Project layout
 
