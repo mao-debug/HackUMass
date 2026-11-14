@@ -9,7 +9,7 @@ equipment has passed an integration test.
 | Current computer | Raspberry Pi 4 | Available | Debian 12, aarch64, Python 3.11.2 confirmed; RAM/board revision to record |
 | Existing desktop access | Partner's monitor and keyboard | Connected to the Pi | Use direct desktop/GitHub or USB handoff; preserve the existing installation |
 | Requested computer | Raspberry Pi 5, 8 GB RAM | Requested; unverified | Delivery and compatible power supply to verify |
-| Connected camera | Camera Module 3, IMX708 | Reported by rpicam | Use Picamera2 capture and CPU inference; this sensor cannot run an IMX500 RPK |
+| Connected camera | Camera Module 3, IMX708 | Capture verified in supplied Pi logs | Two runs of 3 frames at 640×480; image appearance and CPU detection still to verify |
 | Optional AI Camera | IMX500 | Not confirmed as connected | Earlier planned backend remains optional; verify a separate sensor before using its profile |
 | Storage | Installed microSD card | In use | Preserve Debian installation/files; capacity and available space to record |
 | Portable power | Power bank | To verify | Output capability, runtime, cable, and board compatibility to verify |
@@ -50,17 +50,21 @@ microSD card rather than overwriting the current installation.
 
 ## Bench record
 
-No physical acceptance result is claimed. Fill in this record on the Pi:
+The supplied Pi terminal output confirms camera capture at commit `827577d`.
+Full detection acceptance remains pending. Continue filling in this record:
 
 | Field | Observed value |
 | --- | --- |
 | Test date, operator, board revision/RAM | Not measured |
+| Capture evidence received | 2026-11-14; terminal output from `simaofea@TheDon`, commit `827577d` |
 | OS identity, architecture, Python executable/version | Debian 12, aarch64, Python 3.11.2 reported on Pi |
 | NumPy/OpenCV/Picamera2/PyYAML/setuptools | 1.24.2 / 4.6.0 / 0.3.27 / 6 / 66 reported; import origins to record |
-| Camera enumeration | rpicam reports IMX708; vidi capture test pending |
+| Camera enumeration | rpicam/libcamera report IMX708 |
+| vidi camera-only capture | Passed twice: 3 frames per run at 640×480; `source=picamera2`, `detector=none`, no reported errors |
+| Image export and visual inspection | Saved to `/home/simaofea/vidi/artifacts/pi-camera.png`; image contents, orientation, and colors not yet inspected |
 | CPU model assets | Fixed-commit author files downloaded/tested locally on Mac; transfer or approved download to Pi still required |
 | CPU model load/forward | Passed on Mac synthetic frame with zero detections; not a Pi or accuracy test |
-| Camera startup time and requested/actual frame size | Not measured |
+| Camera startup time and requested/actual frame size | Startup duration not measured; requested and delivered 640×480 |
 | 100-frame offline report and observed processing rate | Not run |
 | Missing model, unplugged camera, and interruption cleanup | Not tested |
 | Optional one-shot cloud test, project tier, terms review | Not authorized or run |
