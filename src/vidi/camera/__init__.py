@@ -1,4 +1,4 @@
-"""Frame sources for local VisionBridge development."""
+"""Frame sources for local vidi development."""
 
 from .capture import CaptureError, FrameCapture
 

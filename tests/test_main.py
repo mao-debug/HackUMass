@@ -11,10 +11,10 @@ import sys
 import cv2
 import pytest
 
-from visionbridge import __version__
-from visionbridge.camera.capture import CaptureError
-from visionbridge.core import controller
-from visionbridge.main import main
+from vidi import __version__
+from vidi.camera.capture import CaptureError
+from vidi.core import controller
+from vidi.main import main
 
 
 SOURCE_DIRECTORY = Path(__file__).resolve().parents[1] / "src"
@@ -25,7 +25,7 @@ def run_module(directory: Path, *arguments: str) -> subprocess.CompletedProcess[
     environment = os.environ.copy()
     environment["PYTHONPATH"] = str(SOURCE_DIRECTORY)
     return subprocess.run(
-        [sys.executable, "-m", "visionbridge", *arguments],
+        [sys.executable, "-m", "vidi", *arguments],
         cwd=directory,
         env=environment,
         capture_output=True,
@@ -57,8 +57,8 @@ def test_module_default_sample_exports_one_frame_from_any_directory(tmp_path):
 @pytest.mark.parametrize(
     ("argument", "expected"),
     [
-        ("--help", "VisionBridge Phase 1"),
-        ("--version", f"VisionBridge {__version__}"),
+        ("--help", "vidi Phase 2"),
+        ("--version", f"vidi {__version__}"),
     ],
 )
 def test_module_help_and_version_from_any_directory(tmp_path, argument, expected):
@@ -196,7 +196,7 @@ def test_missing_optional_runtime_dependency_is_reported(monkeypatch, caplog):
     monkeypatch.setattr(controller, "run_simulation", fail)
 
     assert main([]) == 1
-    assert "Install requirements.txt" in caplog.text
+    assert "README.md" in caplog.text
     assert "Traceback" not in caplog.text
 
 

@@ -1,4 +1,4 @@
-"""Simulation frame sources; Raspberry Pi camera integration is a later phase.
+"""Portable frame sources; the AI Camera adapter lives in camera.imx500.
 
 Frames use OpenCV's BGR color order. The built-in sample is a synthetic test
 pattern, not a photograph or the output of an object detection model.
@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 
 if TYPE_CHECKING:
-    from visionbridge.core.configuration import CameraSettings
+    from vidi.core.configuration import CameraSettings
 
 logger = logging.getLogger(__name__)
 

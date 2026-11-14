@@ -1,18 +1,21 @@
-# Phase 1 simulation only. No network requests, inference, or audio output.
+# Hardware-free default. No network requests, inference, or audio output.
 camera:
-  source: sample  # sample (synthetic), image, or webcam
+  source: sample  # sample (synthetic), image, webcam, or imx500
   image_path: null  # Required for image; relative to this YAML file.
   webcam_index: 0
   width: 640
   height: 480
   fps: 5.0
+  startup_timeout_s: 300.0
+  capture_timeout_s: 5.0
 
 simulation:
   max_frames: 1  # Bounded runs; there is no continuous speech.
   preview: false  # Opt in only on a machine with a desktop display.
   output_path: null  # Optional last-frame export, relative to this YAML file.
+  report_path: null  # Optional JSON report; never an automatic recording.
 
-# Reserved selections for later approved phases; nothing is loaded or downloaded.
+# Select none/null, fixture, or imx500 explicitly. No automatic downloads.
 models:
   object_detection_backend: null
   object_detection_path: null
@@ -20,5 +23,18 @@ models:
   ocr_backend: null
   speech_recognition_backend: null
   text_to_speech_backend: null
+
+detection:
+  confidence_threshold: 0.55
+  max_detections: 10
+  labels_path: null  # Optional model-aligned labels; preserve class ID gaps.
+  fixture_path: null
+
+# These settings never enable a request; --describe is a per-run opt-in.
+cloud:
+  model: gemini-3.5-flash-lite
+  timeout_s: 15.0
+  max_output_tokens: 256
+  max_image_edge: 1024
 
 log_level: INFO

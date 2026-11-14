@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "image_size": [640, 480],
+  "detections": [
+    {"class_id": 0, "label": "person", "confidence": 0.95, "bbox_xyxy": [64, 160, 256, 384]},
+    {"class_id": 61, "label": "chair", "confidence": 0.80, "bbox_xyxy": [380, 210, 515, 365]}
+  ]
+}

@@ -1,0 +1,9 @@
+# SIMULATED DETECTIONS. These boxes are invented development data, not inference.
+camera:
+  source: sample
+  width: 640
+  height: 480
+models:
+  object_detection_backend: fixture
+detection:
+  fixture_path: ../examples/detection-fixture.json

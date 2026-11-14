@@ -6,8 +6,8 @@ import cv2
 import numpy as np
 import pytest
 
-from visionbridge.camera.capture import CaptureError, FrameCapture
-from visionbridge.core.configuration import CameraSettings
+from vidi.camera.capture import CaptureError, FrameCapture
+from vidi.core.configuration import CameraSettings
 
 
 def test_sample_is_deterministic_and_returns_independent_frames() -> None:

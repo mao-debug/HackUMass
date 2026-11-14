@@ -1,21 +1,25 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "visionbridge"
+name = "vidi"
 version = "0.1.0"
-description = "Local simulation foundation for the VisionBridge smart glasses prototype"
+description = "Local AI Camera detection and optional scene descriptions for vidi smart glasses"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "numpy>=1.26,<3",
-    "opencv-python>=4.10,<5",
-    "PyYAML>=6.0.2,<7",
+    "numpy>=1.24,<3",
+    "PyYAML>=6,<7",
 ]
 
+[project.optional-dependencies]
+desktop = ["numpy>=1.26,<3", "opencv-python>=4.10,<5"]
+# SDK 2.34 retry-option behavior is covered by offline transport tests.
+gemini = ["google-genai==2.34.0"]
+
 [project.scripts]
-visionbridge = "visionbridge.main:main"
+vidi = "vidi.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

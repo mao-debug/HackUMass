@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from visionbridge.core.configuration import (
+from vidi.core.configuration import (
     AppSettings,
     CameraSettings,
     ConfigurationError,
