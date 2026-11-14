@@ -8,6 +8,9 @@ camera:
   fps: 5.0
   startup_timeout_s: 300.0
   capture_timeout_s: 5.0
+  settle_s: 0.0
+  autofocus: "off"
+  autofocus_timeout_s: 4.0
 
 simulation:
   max_frames: 1  # Bounded runs; there is no continuous speech.
@@ -39,3 +42,17 @@ cloud:
   max_image_edge: 1024
 
 log_level: INFO
+
+# Configuration alone never enables OCR or speech; use --read-text / --speak.
+ocr:
+  language: eng
+  psm: 6
+  preprocess: grayscale
+  timeout_s: 15.0
+  executable: tesseract
+
+speech:
+  speed_wpm: 150
+  max_words: 60
+  timeout_s: 45.0
+  voice: null  # Defaults to en for eSpeak NG, Samantha for macOS say.

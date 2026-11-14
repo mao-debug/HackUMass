@@ -6,6 +6,7 @@ The public adapter shares bounded process transport with the AI Camera adapter.
 
 from __future__ import annotations
 
+from concurrent.futures import TimeoutError as FutureTimeoutError
 import logging
 import time
 from typing import TYPE_CHECKING
@@ -49,9 +50,49 @@ class _Picamera2Session:
             # Picamera2's RGB888 arrays contain B,G,R bytes, matching OpenCV.
             self.camera.configure(configuration)
             self.camera.start(show_preview=False)
+            self._prepare_snapshot(settings)
         except BaseException:
             self.close()
             raise
+
+    def _prepare_snapshot(self, settings: CameraSettings) -> None:
+        """Apply opt-in settling/focus while the parent startup deadline runs.
+
+        Picamera2 0.3.27 supports asynchronous autofocus_cycle and wait(timeout).
+        A timed-out job must be cancelled and the camera closed rather than
+        placing a capture request behind an unfinished autofocus operation.
+        """
+        if settings.settle_s:
+            time.sleep(settings.settle_s)
+        if settings.autofocus == "off":
+            return
+        try:
+            controls = self.camera.camera_controls
+            if not {"AfMode", "AfTrigger"}.issubset(controls):
+                logger.warning("Pi camera autofocus controls are unavailable; attempting a snapshot without autofocus.")
+                return
+            job = self.camera.autofocus_cycle(wait=False)
+            focused = self.camera.wait(job, timeout=settings.autofocus_timeout_s)
+        except FutureTimeoutError as exc:
+            self._cancel_autofocus()
+            raise CaptureError(
+                f"Pi camera autofocus timed out after {settings.autofocus_timeout_s:g} seconds; "
+                "no snapshot was captured."
+            ) from exc
+        except Exception as exc:
+            self._cancel_autofocus()
+            raise CaptureError("Pi camera autofocus failed; no snapshot was captured.") from exc
+        if focused:
+            logger.info("Pi camera reported autofocus success; text sharpness has not been verified.")
+        else:
+            logger.warning("Pi camera autofocus did not confirm focus; attempting a snapshot without confirmed focus.")
+
+    def _cancel_autofocus(self) -> None:
+        """Best-effort queue cleanup; preserve the original autofocus failure."""
+        try:
+            self.camera.cancel_all_and_flush()
+        except Exception as exc:
+            logger.warning("Pi camera could not cancel pending autofocus operations: %s", exc)
 
     def read_packet(self, frame_id: int) -> FramePacket | None:
         request = self.camera.capture_request(flush=True)

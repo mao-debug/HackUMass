@@ -6,15 +6,16 @@ import json
 import logging
 import os
 import sys
+import tempfile
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 import cv2
 
 from vidi.camera.capture import CaptureError, FrameCapture
 from vidi.core.configuration import AppSettings, validate_runtime_settings
-from vidi.core.types import Detection, DetectionResult, FramePacket
+from vidi.core.types import Detection, DetectionResult, FramePacket, OcrResult, SpeechResult
 
 logger = logging.getLogger(__name__)
 WINDOW_TITLE = "vidi (q/Esc to exit)"
@@ -45,6 +46,8 @@ class SimulationResult:
     description_error: str | None = None
     description_model: str | None = None
     description_elapsed_s: float | None = None
+    ocr: OcrResult = field(default_factory=OcrResult)
+    speech: SpeechResult = field(default_factory=SpeechResult)
 
 
 def _open_source(settings: AppSettings):
@@ -68,15 +71,42 @@ def _save_image(path: Path, image) -> None:
         raise SimulationError(f"Cannot save frame to {path}: {exc}") from exc
 
 
+def _save_report(path: Path, report: dict) -> None:
+    """Replace a report only after a complete, valid JSON checkpoint is ready."""
+    temporary = None
+    try:
+        encoded = json.dumps(report, indent=2, allow_nan=False) + "\n"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent,
+            prefix=f".{path.name}.", suffix=".tmp", delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(encoded)
+        temporary.replace(path)
+        temporary = None
+    except (OSError, TypeError, ValueError) as exc:
+        raise SimulationError(f"Cannot save JSON report to {path}: {exc}") from exc
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("Could not remove a temporary JSON report file.")
+
+
 def run_simulation(
-    settings: AppSettings, *, describe: bool = False, question: str = "What is in front of me?"
+    settings: AppSettings, *, describe: bool = False, question: str = "What is in front of me?",
+    read_text: bool = False, speak: bool = False, speech_output: Path | None = None,
 ) -> SimulationResult:
     """Run selected backends; only a per-run describe argument permits an upload.
 
     A configured backend or API key never initiates a request. The optional
     single image submission happens after local camera resources are released.
     """
-    validate_runtime_settings(settings, describe=describe)
+    validate_runtime_settings(
+        settings, describe=describe, read_text=read_text, speak=speak, speech_output=speech_output,
+    )
     backend = settings.models.object_detection_backend or "none"
     preview = settings.simulation.preview
     if preview and sys.platform.startswith("linux") and not (
@@ -202,23 +232,86 @@ def run_simulation(
         description_status=description_status, description_error=description_error,
         description_model=description_model, description_elapsed_s=description_elapsed_s,
     )
-    if result.report_path is not None:
-        report = asdict(result)
+
+    def persist(current: SimulationResult) -> None:
+        """Checkpoint OCR before audio starts, then publish its final outcome."""
+        if current.report_path is None:
+            return
+        report = asdict(current)
         report["output_path"] = str(output) if output is not None else None
-        report["report_path"] = str(result.report_path)
+        report["report_path"] = str(current.report_path)
+        report["speech"]["output_path"] = str(current.speech.output_path) if current.speech.output_path is not None else None
         report.update({
             "schema_version": 1, "source": settings.camera.source, "frames": records,
             "capture_fps": _observed_rate(count, first_frame_ns, last_packet.captured_monotonic_ns),
             "inference_ready_fps": _observed_rate(ready, first_ready_ns, last_ready_ns),
             "last_inference_status": last_detection.status if last_detection is not None else "disabled",
         })
-        try:
-            result.report_path.parent.mkdir(parents=True, exist_ok=True)
-            result.report_path.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n", encoding="utf-8")
-        except (OSError, TypeError, ValueError) as exc:
-            raise SimulationError(f"Cannot save JSON report to {result.report_path}: {exc}") from exc
+        _save_report(current.report_path, report)
 
-    if backend == "none":
+    def persist_interruption(current: SimulationResult) -> None:
+        """A checkpoint failure must not replace the user's Ctrl+C outcome."""
+        try:
+            persist(current)
+        except SimulationError as exc:
+            logger.error("%s. The interrupted run retains its previous checkpoint, if available.", exc)
+
+    if read_text:
+        from vidi.ai.text_recognition import TesseractRecognizer
+
+        ocr_started = time.monotonic()
+        try:
+            ocr = TesseractRecognizer(settings.ocr).recognize(last_packet)
+        except KeyboardInterrupt:
+            result = replace(result, ocr=OcrResult(
+                status="cancelled", frame_id=last_packet.frame_id, backend="tesseract",
+                elapsed_s=time.monotonic() - ocr_started,
+            ))
+            persist_interruption(result)
+            raise
+        requested_speech = speak or speech_output is not None
+        pending = SpeechResult()
+        if requested_speech:
+            pending = SpeechResult(
+                status="pending" if ocr.status in ("ready", "no_text") else "skipped_ocr_failed",
+                mode="wav" if speech_output is not None else "playback", output_path=speech_output,
+            )
+        result = replace(result, ocr=ocr, speech=pending)
+        persist(result)
+        # OCR text is user-requested output, not a background diagnostic log.
+        if ocr.status == "ready":
+            print(ocr.text, flush=True)
+        elif ocr.status == "no_text":
+            print("No readable text found.", flush=True)
+        else:
+            logger.error("Text reading failed: %s", ocr.error or "Local OCR unavailable.")
+        if requested_speech and ocr.status in ("ready", "no_text"):
+            from vidi.audio.text_to_speech import LocalSpeech
+
+            speech_started = time.monotonic()
+            try:
+                spoken = LocalSpeech(settings.speech, settings.models.text_to_speech_backend).speak(
+                    ocr.text, output_path=speech_output,
+                )
+            except KeyboardInterrupt:
+                result = replace(result, speech=replace(
+                    pending, status="cancelled", elapsed_s=time.monotonic() - speech_started,
+                ))
+                persist_interruption(result)
+                raise
+            result = replace(result, speech=spoken)
+            if spoken.status == "failed":
+                logger.error("Speech failed: %s. Recognized text is preserved.", spoken.error)
+            elif spoken.mode == "wav":
+                logger.info("Speech synthesized to %s; playback was not requested.", spoken.output_path)
+            else:
+                logger.info("Speech engine completed; physical audibility needs a connected output device.")
+
+    persist(result)
+
+    if read_text:
+        logger.info("Local text reading completed: OCR=%s, speech=%s.", result.ocr.status, result.speech.status)
+    elif backend == "none":
         logger.info(
             "Simulation completed: %d frame(s), %dx%d, source=%s. %s",
             count, result.width, result.height, settings.camera.source,

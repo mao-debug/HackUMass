@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Mapping
@@ -31,7 +32,7 @@ def _positive_number(name: str, value: Any) -> None:
 
 
 def _optional_text(name: str, value: Any) -> None:
-    if value is not None and (not isinstance(value, str) or not value.strip()):
+    if value is not None and (not isinstance(value, str) or not value.strip() or "\x00" in value):
         raise ConfigurationError(f"{name} must be a nonempty string or null.")
 
 
@@ -52,6 +53,9 @@ class CameraSettings:
     fps: float = 5.0
     startup_timeout_s: float = 300.0
     capture_timeout_s: float = 5.0
+    settle_s: float = 0.0
+    autofocus: str = "off"
+    autofocus_timeout_s: float = 4.0
 
     def __post_init__(self) -> None:
         if self.source not in ("sample", "image", "webcam", "picamera2", "imx500"):
@@ -65,6 +69,14 @@ class CameraSettings:
         _positive_number("camera.fps", self.fps)
         _positive_number("camera.startup_timeout_s", self.startup_timeout_s)
         _positive_number("camera.capture_timeout_s", self.capture_timeout_s)
+        if self.settle_s != 0 or type(self.settle_s) not in (int, float):
+            _positive_number("camera.settle_s", self.settle_s)
+        if self.autofocus not in ("off", "single_if_supported"):
+            raise ConfigurationError("camera.autofocus must be off or single_if_supported.")
+        _positive_number("camera.autofocus_timeout_s", self.autofocus_timeout_s)
+        preparation_s = self.settle_s + (self.autofocus_timeout_s if self.autofocus != "off" else 0)
+        if preparation_s >= self.startup_timeout_s:
+            raise ConfigurationError("Camera preparation must fit within camera.startup_timeout_s.")
 
 
 @dataclass(frozen=True)
@@ -125,6 +137,45 @@ class CloudSettings:
 
 
 @dataclass(frozen=True)
+class OcrSettings:
+    """Local printed-text recognition; configuration never enables a reading."""
+
+    language: str = "eng"
+    psm: int = 6
+    preprocess: str = "grayscale"
+    timeout_s: float = 15.0
+    executable: str = "tesseract"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.language, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(?:\+[A-Za-z][A-Za-z0-9_]*)*", self.language):
+            raise ConfigurationError("ocr.language must be a language code such as eng or eng+spa.")
+        if type(self.psm) is not int or self.psm not in (3, 6, 7, 11):
+            raise ConfigurationError("ocr.psm must be 3, 6, 7, or 11.")
+        if self.preprocess not in ("grayscale", "none"):
+            raise ConfigurationError("ocr.preprocess must be grayscale or none.")
+        _positive_number("ocr.timeout_s", self.timeout_s)
+        _optional_text("ocr.executable", self.executable)
+        if self.executable is None:
+            raise ConfigurationError("ocr.executable must name the local Tesseract executable.")
+
+
+@dataclass(frozen=True)
+class SpeechSettings:
+    """One bounded utterance or explicit synthesis export, without queues."""
+
+    speed_wpm: int = 150
+    max_words: int = 60
+    timeout_s: float = 45.0
+    voice: str | None = None
+
+    def __post_init__(self) -> None:
+        _integer("speech.speed_wpm", self.speed_wpm)
+        _integer("speech.max_words", self.max_words)
+        _positive_number("speech.timeout_s", self.timeout_s)
+        _optional_text("speech.voice", self.voice)
+
+
+@dataclass(frozen=True)
 class ModelSettings:
     """Local detector selection, optional descriptions, and future backends."""
 
@@ -155,6 +206,8 @@ class AppSettings:
     log_level: str = "INFO"
     detection: DetectionSettings = field(default_factory=DetectionSettings)
     cloud: CloudSettings = field(default_factory=CloudSettings)
+    ocr: OcrSettings = field(default_factory=OcrSettings)
+    speech: SpeechSettings = field(default_factory=SpeechSettings)
 
     def __post_init__(self) -> None:
         if self.log_level not in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
@@ -196,7 +249,7 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         raise ConfigurationError(f"Cannot read configuration {config_path}: {exc}") from exc
     if document is None:
         raise ConfigurationError("Configuration must contain a YAML mapping, not an empty document.")
-    values = _mapping(document, "root", {"camera", "simulation", "models", "log_level", "detection", "cloud"})
+    values = _mapping(document, "root", {"camera", "simulation", "models", "log_level", "detection", "cloud", "ocr", "speech"})
     return AppSettings(
         camera=_section(values, "camera", CameraSettings, config_path.parent),
         simulation=_section(values, "simulation", SimulationSettings, config_path.parent),
@@ -204,12 +257,36 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         log_level=values.get("log_level", "INFO"),
         detection=_section(values, "detection", DetectionSettings, config_path.parent),
         cloud=_section(values, "cloud", CloudSettings, config_path.parent),
+        ocr=_section(values, "ocr", OcrSettings, config_path.parent),
+        speech=_section(values, "speech", SpeechSettings, config_path.parent),
     )
 
 
-def validate_runtime_settings(settings: AppSettings, *, describe: bool = False) -> None:
+def validate_runtime_settings(
+    settings: AppSettings, *, describe: bool = False, read_text: bool = False,
+    speak: bool = False, speech_output: Path | None = None,
+) -> None:
     """Check backend combinations after command-line overrides are applied."""
     backend = settings.models.object_detection_backend or "none"
+    if (speak or speech_output is not None) and not read_text:
+        raise ConfigurationError("--speak and --speech-output require --read-text.")
+    if speak and speech_output is not None:
+        raise ConfigurationError("Choose either --speak or --speech-output, not both.")
+    if read_text:
+        if describe:
+            raise ConfigurationError("--read-text cannot be combined with --describe.")
+        if backend != "none":
+            raise ConfigurationError("Reading mode requires --detector none or the pi-ocr profile.")
+        if settings.models.ocr_backend not in (None, "tesseract"):
+            raise ConfigurationError("Reading mode supports the local tesseract OCR backend.")
+    if speak or speech_output is not None:
+        if settings.models.text_to_speech_backend not in (None, "espeak_ng", "say"):
+            raise ConfigurationError("Speech backend must be espeak_ng or say.")
+        if speech_output is not None:
+            if not isinstance(speech_output, Path) or speech_output.suffix.lower() != ".wav":
+                raise ConfigurationError("--speech-output requires a local .wav path.")
+            if settings.models.text_to_speech_backend == "say":
+                raise ConfigurationError("WAV export requires the espeak_ng backend; say supports playback only.")
     if backend not in ("none", "imx500", "opencv_ssd", "fixture"):
         raise ConfigurationError("Object detector must be none, imx500, opencv_ssd, or fixture.")
     if backend == "opencv_ssd":
@@ -233,3 +310,11 @@ def validate_runtime_settings(settings: AppSettings, *, describe: bool = False) 
     report = settings.simulation.report_path
     if output is not None and report is not None and output.resolve() == report.resolve():
         raise ConfigurationError("The image output and JSON report must use different paths.")
+    if read_text and settings.camera.image_path is not None:
+        for other in (output, report):
+            if other is not None and other.resolve() == settings.camera.image_path.resolve():
+                raise ConfigurationError("Reading exports must not overwrite the input image.")
+    if speech_output is not None:
+        for other in (output, report, settings.camera.image_path):
+            if other is not None and speech_output.resolve() == other.resolve():
+                raise ConfigurationError("The WAV, image input/output, and JSON report must use different paths.")

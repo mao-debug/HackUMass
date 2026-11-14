@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -36,3 +37,29 @@ class FramePacket:
     captured_monotonic_ns: int
     image_bgr: np.ndarray
     inference: DetectionResult | None = None
+
+
+@dataclass(frozen=True)
+class OcrResult:
+    """One local OCR attempt; text is the engine's output, not a correction."""
+
+    status: str = "not_requested"
+    frame_id: int | None = None
+    text: str = ""
+    backend: str | None = None
+    elapsed_s: float = 0.0
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class SpeechResult:
+    """Engine completion does not establish that physical audio was audible."""
+
+    status: str = "not_requested"
+    mode: str | None = None
+    backend: str | None = None
+    text: str = ""
+    truncated: bool = False
+    elapsed_s: float = 0.0
+    output_path: Path | None = None
+    error: str | None = None

@@ -1,0 +1,28 @@
+# Camera Module 3 reading profile. Invoke --read-text explicitly.
+camera:
+  source: picamera2
+  width: 1280
+  height: 960
+  fps: 5.0
+  startup_timeout_s: 30.0
+  capture_timeout_s: 5.0
+  settle_s: 1.0
+  autofocus: single_if_supported
+  autofocus_timeout_s: 4.0
+models:
+  object_detection_backend: none
+  ocr_backend: tesseract
+  text_to_speech_backend: espeak_ng
+simulation:
+  max_frames: 1
+  preview: false
+ocr:
+  language: eng
+  psm: 6
+  preprocess: grayscale
+  timeout_s: 15.0
+speech:
+  speed_wpm: 150
+  max_words: 60
+  timeout_s: 45.0
+  voice: en

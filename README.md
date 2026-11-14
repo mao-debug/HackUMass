@@ -5,8 +5,9 @@ users. The connected Pi 4 camera reports **IMX708 (Camera Module 3)**. Phase 2
 uses Picamera2 capture and local OpenCV DNN CPU detection with MobileNet-SSD.
 The separate IMX500 AI Camera backend remains optional for that different
 sensor. macOS supports fixture replay, and an explicit one-shot Gemini text
-description is available for the demonstration. OCR, speech output, and voice
-commands remain deferred. Live detection and performance need on-device checks.
+description is available for the demonstration. Phase 3 adds opt-in local OCR
+and a short speech response or WAV export. Voice commands remain deferred.
+Pi OCR and audio acceptance are pending; the audio output device is unverified.
 
 The default run processes one synthetic sample frame with detection disabled.
 It opens no camera or preview, loads no model, makes no network request, and
@@ -80,7 +81,8 @@ decoder instead accepts its specific baseline `.rpk` and model-aligned
 
 `--max-frames` sets a positive frame limit. `--preview`/`--no-preview` control
 the desktop window; **q**, **Escape**, and **Ctrl+C** stop a run. `--output PATH`
-saves the final annotated frame, while `--report PATH` writes a JSON result.
+saves the final frame, with overlays when detection is enabled, while
+`--report PATH` writes a JSON result.
 Both are explicit local exports. Generated files belong in ignored
 `artifacts/`; use `.png` for an image export. `--log-level DEBUG` enables more
 logging. A fixture report is explicitly marked simulated.
@@ -136,6 +138,54 @@ measurement. The later 100-frame offline bench procedure is in
 [docs/phase2.md](docs/phase2.md). Missing local build prerequisites should be reported
 before adding packages; the source-tree command above remains available.
 
+## Read text and optional speech
+
+`--read-text` runs local Tesseract once on the final **unannotated** frame,
+after camera resources close. It requires detector `none` and cannot be
+combined with `--describe`. Add either `--speak` for one speech response or
+`--speech-output FILE.wav` for a local WAV export. Both require `--read-text`
+and cannot be combined. YAML settings alone enable none of these actions.
+
+The Pi OCR profile requests one 1280×960 frame, a one-second settling interval,
+and a supported single autofocus cycle with a four-second wait limit. Camera
+startup/capture remain bounded at 30/five seconds. Autofocus does not guarantee
+readable text. After the pending OCR/speech package installation is approved
+and completed, run from the repository root:
+
+```sh
+# Read locally without playing audio.
+PYTHONNOUSERSITE=1 PYTHONPATH=src /usr/bin/python3 -m vidi --config config/pi-ocr.yaml --read-text --output artifacts/pi-ocr.png --report artifacts/pi-ocr.json
+
+# Optional WAV synthesis without playback.
+PYTHONNOUSERSITE=1 PYTHONPATH=src /usr/bin/python3 -m vidi --config config/pi-ocr.yaml --read-text --speech-output artifacts/pi-reading.wav --report artifacts/pi-reading.json
+
+# One requested spoken response, once the output device/volume are verified.
+PYTHONNOUSERSITE=1 PYTHONPATH=src /usr/bin/python3 -m vidi --config config/pi-ocr.yaml --read-text --speak --report artifacts/pi-speaking.json
+```
+
+The default OCR language is English (`eng`), with grayscale preprocessing and
+a 15-second process timeout. Speech uses 150 words per minute, a 60-word text
+excerpt, and a 45-second timeout. Truncated excerpts add “More text is
+available.” Empty OCR results use “No readable text found.” Full recognized
+text remains available in an explicitly requested JSON report. Speech status
+`completed` means the engine finished; it does not verify audibility.
+
+The Mac has native `say`, but Tesseract is not installed. Approval is pending
+for Homebrew Tesseract on Mac and the Pi OS packages `tesseract-ocr`,
+`tesseract-ocr-eng`, and `espeak-ng`. No Python OCR/TTS wrapper is needed.
+After setup, a local-image Mac run uses the existing desktop environment:
+
+```sh
+python -m vidi --image path/to/printed-text.png --detector none --read-text --report artifacts/mac-ocr.json
+python -m vidi --image path/to/printed-text.png --detector none --read-text --speak
+```
+
+Mac live speech defaults to the native Samantha voice; the Pi profile uses
+eSpeak NG's English voice. WAV export uses eSpeak NG, not native Mac `say`.
+Package approval, setup, failure handling, and controlled bench checks are
+documented in [docs/phase3.md](docs/phase3.md). The later 100-frame detection
+and broader chair tests are separate checks and need not block trying OCR.
+
 ## Optional Gemini demonstration
 
 `--describe` explicitly opts into one cloud request for that run. After camera
@@ -167,13 +217,15 @@ cloud failure must leave the local detection result available.
 [config/settings.yaml](config/settings.yaml) is the safe default;
 [config/fixtures.yaml](config/fixtures.yaml) selects replay, and
 [config/pi.yaml](config/pi.yaml) selects IMX708/Picamera2 with CPU detection;
-[config/pi-imx500.yaml](config/pi-imx500.yaml) is the optional AI Camera profile.
+[config/pi-ocr.yaml](config/pi-ocr.yaml) selects the camera-only OCR snapshot,
+and [config/pi-imx500.yaml](config/pi-imx500.yaml) is the optional AI Camera profile.
 The `camera`,
-`simulation`, `detection`, `models`, and `cloud` sections configure their
+`simulation`, `detection`, `models`, `ocr`, `speech`, and `cloud` sections configure their
 respective boundaries. Unknown keys and invalid values fail clearly. The
 `models.object_detection_backend`, `object_detection_path`, and
-`object_detection_config_path` settings are active; OCR and audio backend
-selections remain reserved for later phases.
+`object_detection_config_path` settings select local detection assets.
+`models.ocr_backend` and `models.text_to_speech_backend` select engines only
+when the corresponding CLI action is requested.
 
 ```sh
 python -m pytest
@@ -188,7 +240,8 @@ Distribution metadata may be absent for an apt-provided module. Discovery alone
 does not verify native ABI compatibility, camera capture, inference, or audio.
 Camera capture and live CPU inference are recorded separately in
 [docs/hardware.md](docs/hardware.md); broader detection validation and audio
-acceptance remain pending. Tests use fixtures and mocked hardware/cloud
+acceptance remain pending. Phase 3 OCR/audio hardware checks have not yet run.
+Tests use fixtures and mocked hardware/cloud
 boundaries; they do not replace Pi acceptance tests.
 
 Local validation used macOS arm64 and Python 3.14.6. Fixture image/report export,
@@ -209,15 +262,17 @@ without silently changing the selected backend.
 The repository root is the vidi project. Code lives in `src/vidi/`: `camera/`
 owns capture, `ai/object_detection.py` owns detection results and replay,
 `ai/cpu_detection.py` owns CPU detection,
-`ai/scene_description.py` owns the optional cloud boundary, and `core/` owns
+`ai/text_recognition.py` owns local OCR, `audio/text_to_speech.py` owns optional
+speech, `ai/scene_description.py` owns the cloud boundary, and `core/` owns
 configuration and the bounded controller. `main.py` and `__main__.py` expose the
-CLI. `audio/`, `assistant/`, and `ai/text_recognition.py` remain later-phase
+CLI. Speech recognition and the voice assistant remain later-phase
 scaffolding. `config/`, `examples/`, `scripts/`, `tests/`, and `docs/` hold
 configuration, fixtures, diagnostics, verification, and setup notes.
 
 Phase 1 established the foundation. Phase 2 covers camera/detection plus the
-explicit one-shot text demonstration described above. OCR/text-to-speech,
-voice commands, and wearable deployment/optimization remain later work.
+explicit one-shot Gemini text demonstration. Phase 3 adds requested local
+OCR and speech; its installation and hardware acceptance remain pending.
+Voice commands and wearable deployment/optimization remain later work.
 Model class coverage is limited to the selected model's labels; an empty
 detection list is not evidence that a path is clear. The full plan, official
 references, approval gates, and hardware acceptance record are in

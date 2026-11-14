@@ -1,6 +1,7 @@
 """Ordinary Pi camera ownership and bounded transport without real hardware."""
 
 import builtins
+from concurrent.futures import TimeoutError as FutureTimeoutError
 import json
 import sys
 from types import ModuleType, SimpleNamespace
@@ -15,7 +16,7 @@ from vidi.core.configuration import CameraSettings
 from vidi.core.types import DetectionResult, FramePacket
 
 
-def make_session(monkeypatch):
+def make_session(monkeypatch, *, settings_overrides=None, camera_setup=None):
     image = np.full((60, 80, 3), (10, 20, 30), dtype=np.uint8)
     request = Mock()
     request.make_array.return_value = image
@@ -23,9 +24,13 @@ def make_session(monkeypatch):
     camera = Mock()
     camera.capture_request.return_value = request
     camera.create_preview_configuration.return_value = {"main": {"format": "RGB888"}}
+    camera.camera_controls = {"AfMode": None, "AfTrigger": None}
+    camera.wait.return_value = True
+    if camera_setup is not None:
+        camera_setup(camera)
     factory = Mock(return_value=camera)
     monkeypatch.setattr(picamera2, "_load_picamera2", lambda: factory)
-    settings = CameraSettings(source="picamera2", width=80, height=60, fps=10)
+    settings = CameraSettings(source="picamera2", width=80, height=60, fps=10, **(settings_overrides or {}))
     session = picamera2._Picamera2Session(settings)
     return session, factory, camera, request, image
 
@@ -53,6 +58,115 @@ def test_generic_session_configures_camera_zero_and_returns_owned_bgr_without_in
     session.close()
     camera.stop.assert_called_once_with()
     camera.close.assert_called_once_with()
+
+
+def test_default_capture_does_not_settle_or_start_an_autofocus_job(monkeypatch):
+    sleep = Mock()
+    monkeypatch.setattr(picamera2.time, "sleep", sleep)
+    session, _, camera, _, _ = make_session(monkeypatch)
+    sleep.assert_not_called()
+    camera.autofocus_cycle.assert_not_called()
+    camera.wait.assert_not_called()
+    camera.cancel_all_and_flush.assert_not_called()
+    session.close()
+
+
+def test_snapshot_settles_and_completes_autofocus_before_any_capture(monkeypatch, caplog):
+    events = []
+    job = object()
+    monkeypatch.setattr(picamera2.time, "sleep", lambda seconds: events.append(("settle", seconds)))
+
+    def setup(camera):
+        camera.start.side_effect = lambda **kwargs: events.append(("start", kwargs))
+        camera.autofocus_cycle.side_effect = lambda **kwargs: events.append(("focus", kwargs)) or job
+        camera.wait.side_effect = lambda actual_job, **kwargs: events.append(("wait", actual_job, kwargs)) or True
+
+    caplog.set_level("INFO", logger=picamera2.__name__)
+    session, _, camera, request, image = make_session(
+        monkeypatch, settings_overrides={"settle_s": 1.0, "autofocus": "single_if_supported", "autofocus_timeout_s": 4.0},
+        camera_setup=setup,
+    )
+    assert events == [
+        ("start", {"show_preview": False}), ("settle", 1.0),
+        ("focus", {"wait": False}), ("wait", job, {"timeout": 4.0}),
+    ]
+    assert "text sharpness has not been verified" in caplog.text
+    camera.capture_request.assert_not_called()
+    packet = session.read_packet(7)
+    assert packet.frame_id == 7 and packet.inference is None
+    np.testing.assert_array_equal(packet.image_bgr[0, 0], (10, 20, 30))
+    assert np.all(image == 255)
+    request.release.assert_called_once_with()
+    camera.cancel_all_and_flush.assert_not_called()
+    session.close()
+
+
+@pytest.mark.parametrize("controls", [{}, {"AfMode": None}, {"AfTrigger": None}])
+def test_missing_autofocus_controls_warns_and_keeps_snapshot_available(monkeypatch, caplog, controls):
+    session, _, camera, _, _ = make_session(
+        monkeypatch, settings_overrides={"autofocus": "single_if_supported"},
+        camera_setup=lambda camera: setattr(camera, "camera_controls", controls),
+    )
+    assert "autofocus controls are unavailable" in caplog.text
+    camera.autofocus_cycle.assert_not_called()
+    camera.wait.assert_not_called()
+    camera.cancel_all_and_flush.assert_not_called()
+    assert session.read_packet(1).inference is None
+    session.close()
+
+
+def test_autofocus_false_warns_and_does_not_cancel_a_finished_job(monkeypatch, caplog):
+    session, _, camera, _, _ = make_session(
+        monkeypatch, settings_overrides={"autofocus": "single_if_supported"},
+        camera_setup=lambda camera: setattr(camera.wait, "return_value", False),
+    )
+    assert "did not confirm focus" in caplog.text
+    camera.autofocus_cycle.assert_called_once_with(wait=False)
+    camera.wait.assert_called_once_with(camera.autofocus_cycle.return_value, timeout=4.0)
+    camera.cancel_all_and_flush.assert_not_called()
+    assert session.read_packet(1).inference is None
+    session.close()
+
+
+@pytest.mark.parametrize("failure_stage", ["cycle", "wait"])
+def test_unexpected_autofocus_error_cancels_closes_and_never_queues_capture(monkeypatch, failure_stage):
+    cameras = []
+
+    def setup(camera):
+        cameras.append(camera)
+        operation = camera.autofocus_cycle if failure_stage == "cycle" else camera.wait
+        operation.side_effect = RuntimeError("focus hardware error")
+
+    with pytest.raises(CaptureError, match="autofocus failed") as caught:
+        make_session(monkeypatch, settings_overrides={"autofocus": "single_if_supported"}, camera_setup=setup)
+    camera = cameras[0]
+    assert isinstance(caught.value.__cause__, RuntimeError)
+    camera.cancel_all_and_flush.assert_called_once_with()
+    camera.capture_request.assert_not_called()
+    camera.stop.assert_called_once_with()
+    camera.close.assert_called_once_with()
+
+
+def test_autofocus_timeout_preserves_failure_despite_cancellation_and_cleanup_errors(monkeypatch, caplog):
+    cameras = []
+
+    def setup(camera):
+        cameras.append(camera)
+        camera.wait.side_effect = FutureTimeoutError("focus job timed out")
+        camera.cancel_all_and_flush.side_effect = RuntimeError("cancel failed")
+        camera.stop.side_effect = RuntimeError("stop failed")
+        camera.close.side_effect = RuntimeError("close failed")
+
+    with pytest.raises(CaptureError, match="autofocus timed out after 4 seconds") as caught:
+        make_session(monkeypatch, settings_overrides={"autofocus": "single_if_supported"}, camera_setup=setup)
+    camera = cameras[0]
+    assert isinstance(caught.value.__cause__, FutureTimeoutError)
+    camera.wait.assert_called_once_with(camera.autofocus_cycle.return_value, timeout=4.0)
+    camera.cancel_all_and_flush.assert_called_once_with()
+    camera.capture_request.assert_not_called()
+    camera.stop.assert_called_once_with()
+    camera.close.assert_called_once_with()
+    assert "could not cancel pending autofocus" in caplog.text
 
 
 def test_generic_loader_never_imports_imx500_or_camera_devices(monkeypatch):

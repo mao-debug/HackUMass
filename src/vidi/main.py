@@ -1,4 +1,4 @@
-"""Local capture/detection CLI with an explicit optional Gemini request."""
+"""Local detection and reading CLI with explicit speech and cloud requests."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from vidi.core.configuration import ConfigurationError, load_settings, validate_
 def build_parser() -> argparse.ArgumentParser:
     """Describe local backends and the per-run cloud opt-in."""
     parser = argparse.ArgumentParser(
-        description="vidi Phase 2: local camera detection, simulation, and optional Gemini descriptions."
+        description="vidi Phase 3: local camera detection, printed-text reading, and optional speech."
     )
     parser.add_argument("--version", action="version", version=f"vidi {__version__}")
     parser.add_argument("--config", type=Path, help="YAML path; omitted means built-in defaults")
@@ -33,6 +33,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-detections", type=int, help="Positive maximum detections per frame")
     parser.add_argument("--detections-fixture", type=Path, help="Explicit simulated detection data")
     parser.add_argument("--report", type=Path, help="Write local detection and timing results as JSON")
+    parser.add_argument("--read-text", action="store_true", help="Read printed text once from the final raw frame (local OCR)")
+    speech = parser.add_mutually_exclusive_group()
+    speech.add_argument("--speak", action="store_true", help="Speak the OCR excerpt once; requires --read-text")
+    speech.add_argument("--speech-output", type=Path, help="Synthesize the OCR excerpt to WAV without playback; requires --read-text")
     parser.add_argument("--describe", action="store_true", help="Send ONE last unannotated image to Gemini (cloud opt-in)")
     parser.add_argument("--question", help="Optional typed question for --describe; does not enable voice input")
     parser.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"))
@@ -95,7 +99,11 @@ def main(argv: list[str] | None = None) -> int:
             log_level=args.log_level or settings.log_level,
         )
         logging.basicConfig(level=settings.log_level, format="%(levelname)s: %(message)s")
-        validate_runtime_settings(settings, describe=args.describe)
+        speech_output = args.speech_output.expanduser().resolve() if args.speech_output is not None else None
+        validate_runtime_settings(
+            settings, describe=args.describe, read_text=args.read_text,
+            speak=args.speak, speech_output=speech_output,
+        )
 
         # Keep --help/--version available even if OpenCV has not been installed.
         from vidi.camera.capture import CaptureError
@@ -103,7 +111,11 @@ def main(argv: list[str] | None = None) -> int:
         from vidi.core.controller import SimulationError, run_simulation
 
         try:
-            if args.describe:
+            if args.read_text:
+                result = run_simulation(settings, read_text=True, speak=args.speak, speech_output=speech_output)
+                if result.ocr.status == "failed" or result.speech.status == "failed":
+                    return 1
+            elif args.describe:
                 result = run_simulation(settings, describe=True, question=args.question or "What is in front of me?")
                 if result.description_status != "ready":
                     return 1
