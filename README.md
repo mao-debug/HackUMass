@@ -186,6 +186,13 @@ before adding packages; the source-tree command above remains available.
 
 ## Read text and optional speech
 
+An optional **Piper neural voice** backend and fixed voice-preview script are
+available for comparing a more natural local voice. Its engine/model downloads
+still require approval, and Pi voice quality/latency have not been verified.
+The isolated `.venv-tts` environment keeps speech dependencies separate from
+the camera environment. See [voice setup and audition](docs/voices.md) before
+using `config/pi-piper-ocr.yaml`. Existing profiles continue to select eSpeak NG.
+
 Phase 3 also supports **Gemini printed-text reading** with your existing SDK
 and saved API key. Stop the live camera command with q/Esc first, then run:
 
@@ -253,8 +260,9 @@ python -m vidi --image path/to/printed-text.png --detector none --read-text --re
 python -m vidi --image path/to/printed-text.png --detector none --read-text --speak
 ```
 
-Mac live speech defaults to the native Samantha voice; the Pi profile uses
-eSpeak NG's English voice. WAV export uses eSpeak NG, not native Mac `say`.
+Mac live speech defaults to the native Samantha voice; the standard Pi profile
+uses eSpeak NG's English voice. WAV export uses the selected eSpeak NG or
+optional Piper backend; native Mac `say` supports playback only.
 Package approval, setup, failure handling, and controlled bench checks are
 documented in [docs/phase3.md](docs/phase3.md). The later 100-frame detection
 and broader chair tests are separate checks and need not block trying OCR.

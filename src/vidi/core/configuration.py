@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 import re
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -182,12 +183,23 @@ class SpeechSettings:
     max_words: int = 60
     timeout_s: float = 45.0
     voice: str | None = None
+    piper_python_path: Path | None = None
+    piper_model_path: Path | None = None
+    piper_length_scale: float = 1.0
+    player: str | None = None
 
     def __post_init__(self) -> None:
         _integer("speech.speed_wpm", self.speed_wpm)
         _integer("speech.max_words", self.max_words)
         _positive_number("speech.timeout_s", self.timeout_s)
         _optional_text("speech.voice", self.voice)
+        _optional_path("speech.piper_python_path", self.piper_python_path)
+        _optional_path("speech.piper_model_path", self.piper_model_path)
+        _positive_number("speech.piper_length_scale", self.piper_length_scale)
+        if not 0.5 <= self.piper_length_scale <= 2.0:
+            raise ConfigurationError("speech.piper_length_scale must be between 0.5 and 2.0.")
+        if self.player not in (None, "paplay", "pw-play", "afplay", "aplay"):
+            raise ConfigurationError("speech.player must be paplay, pw-play, afplay, aplay, or null for automatic selection.")
 
 
 @dataclass(frozen=True)
@@ -245,7 +257,9 @@ def _section(document: dict[str, Any], name: str, cls: type, base: Path) -> Any:
             if not isinstance(value, str) or not value.strip():
                 raise ConfigurationError(f"{name}.{key} must be a nonempty path string or null.")
             path = Path(value).expanduser()
-            values[key] = (base / path).resolve() if not path.is_absolute() else path.resolve()
+            absolute = base / path if not path.is_absolute() else path
+            # Preserve a venv interpreter's symlink so Python finds pyvenv.cfg.
+            values[key] = Path(os.path.abspath(absolute)) if key == "piper_python_path" else absolute.resolve()
     return cls(**values)
 
 
@@ -328,13 +342,13 @@ def validate_runtime_settings(
         if settings.detection.labels_path is not None or settings.detection.fixture_path is not None:
             raise ConfigurationError("Gemini uses its returned labels; remove local labels and fixture paths.")
     if speak or speech_output is not None:
-        if settings.models.text_to_speech_backend not in (None, "espeak_ng", "say"):
-            raise ConfigurationError("Speech backend must be espeak_ng or say.")
+        if settings.models.text_to_speech_backend not in (None, "espeak_ng", "say", "piper"):
+            raise ConfigurationError("Speech backend must be espeak_ng, say, or piper.")
         if speech_output is not None:
             if not isinstance(speech_output, Path) or speech_output.suffix.lower() != ".wav":
                 raise ConfigurationError("--speech-output requires a local .wav path.")
             if settings.models.text_to_speech_backend == "say":
-                raise ConfigurationError("WAV export requires the espeak_ng backend; say supports playback only.")
+                raise ConfigurationError("WAV export requires espeak_ng or piper; say supports playback only.")
     if backend not in ("none", "imx500", "opencv_ssd", "fixture", "gemini"):
         raise ConfigurationError("Object detector must be none, imx500, opencv_ssd, fixture, or gemini.")
     if backend == "opencv_ssd":

@@ -67,3 +67,5 @@ class SpeechResult:
     elapsed_s: float = 0.0
     output_path: Path | None = None
     error: str | None = None
+    voice: str | None = None
+    model: str | None = None

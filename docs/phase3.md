@@ -11,11 +11,13 @@ The connected target remains the existing Pi 4 with Camera Module 3/IMX708,
 Debian 12, Python 3.11.2, Picamera2 0.3.27, and OS OpenCV 4.6.0. Preserve this
 working installation. Phase 2 camera/person checks are recorded in
 [hardware.md](hardware.md); the longer detection bench and broader chair
-checks are independent of trying OCR. **Pi OCR, speaker/headphone operation,
-and live speech have not been verified.** The requested Bluetooth headphones
-have not yet been paired or checked. The Pi check found eSpeak NG missing;
-its installation is approved but not yet verified. Tesseract package approval
-is still pending. Gemini reading can use the existing SDK and saved key
+checks are independent of trying OCR. The supplied Pi Gemini run returned
+HTTP 200 and `OCR=ready` with printed text; that run did not request speech.
+The user subsequently reported audible speech and described the voice as
+robotic. Controlled headphone routing, complete read-aloud accuracy, and the
+optional neural voice still need bench verification. Pi eSpeak NG installation
+is approved; Tesseract package approval is still pending.
+Gemini reading can use the existing SDK and saved key
 without either local OCR or speech executable.
 
 ## Explicit actions
@@ -83,6 +85,8 @@ PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi
 Both speech options need the local eSpeak NG executable on the Pi. The full
 OCR result is saved before speech starts, so a missing engine or audio error
 does not discard the transcription. No Gemini text-to-speech API is called.
+An optional local Piper voice and camera-free audition are described in
+[voice setup](voices.md); new runtime/model downloads require separate approval.
 
 ## Bluetooth headphones on the Pi
 

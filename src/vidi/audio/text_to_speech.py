@@ -63,10 +63,14 @@ class LocalSpeech:
     def speak(self, text: str, *, output_path: Path | None = None) -> SpeechResult:
         """Return an observable result; Ctrl+C propagates after local cleanup.
 
-        File export always uses eSpeak NG and validates a sibling temporary
+        File export uses the selected WAV-capable engine and validates a sibling temporary
         file before replacing the destination. A failed or cancelled export
         preserves any existing destination. No retry or fallback is attempted.
         """
+        if self.backend == "piper":
+            from vidi.audio.piper_speech import PiperSpeech
+
+            return PiperSpeech(self.settings).speak(text, output_path=output_path)
         started = time.monotonic()
         mode = "wav" if output_path is not None else "playback"
         backend = self.backend
@@ -84,12 +88,13 @@ class LocalSpeech:
                 status=status, mode=mode, backend=backend, text=prepared,
                 truncated=truncated, elapsed_s=max(0.0, time.monotonic() - started),
                 output_path=destination, error=error,
+                voice=self.settings.voice or {"say": "Samantha", "espeak_ng": "en"}.get(backend),
             )
 
         if backend not in ("espeak_ng", "say"):
             return result("failed", "No supported local speech backend is configured for this platform.")
         if mode == "wav" and backend == "say":
-            return result("failed", "WAV export requires espeak_ng; the say backend supports playback only.")
+            return result("failed", "WAV export requires espeak_ng or piper; the say backend supports playback only.")
 
         try:
             if backend == "say":

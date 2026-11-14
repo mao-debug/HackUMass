@@ -1,0 +1,32 @@
+# Optional local neural voice. Requires approved engine and voice downloads.
+# Existing profiles keep their current speech engine.
+camera:
+  source: picamera2
+  width: 1280
+  height: 960
+  fps: 5.0
+  startup_timeout_s: 30.0
+  capture_timeout_s: 5.0
+  settle_s: 1.0
+  autofocus: single_if_supported
+  autofocus_timeout_s: 4.0
+models:
+  object_detection_backend: none
+  ocr_backend: gemini
+  text_to_speech_backend: piper
+simulation:
+  max_frames: 1
+  preview: false
+ocr:
+  timeout_s: 60.0
+  preprocess: none
+cloud:
+  model: gemini-3.5-flash-lite
+  max_image_edge: 1024
+  ocr_max_output_tokens: 2048
+speech:
+  piper_python_path: ../.venv-tts/bin/python
+  piper_model_path: ../models/piper/en_US-ljspeech-medium.onnx
+  piper_length_scale: 1.1
+  max_words: 60
+  timeout_s: 60.0

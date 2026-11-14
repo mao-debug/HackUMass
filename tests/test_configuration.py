@@ -238,3 +238,22 @@ def test_live_profile_has_explicit_asynchronous_preview_and_safe_cloud_interval(
 def test_gemini_reading_output_budget_is_bounded(tokens):
     with pytest.raises(ConfigurationError):
         CloudSettings(ocr_max_output_tokens=tokens)
+
+
+def test_neural_speech_paths_resolve_relative_to_profile():
+    root = Path(__file__).resolve().parents[1]
+    settings = load_settings(root / "config/pi-piper-ocr.yaml")
+    assert settings.models.text_to_speech_backend == "piper"
+    assert settings.speech.piper_python_path == root / ".venv-tts/bin/python"
+    assert settings.speech.piper_model_path == root / "models/piper/en_US-ljspeech-medium.onnx"
+    assert settings.speech.piper_length_scale == 1.1
+
+
+def test_neural_speech_interpreter_keeps_venv_symlink(tmp_path):
+    target = tmp_path / "system-python"
+    target.write_text("interpreter placeholder")
+    interpreter = tmp_path / "tts-env" / "bin" / "python"
+    interpreter.parent.mkdir(parents=True)
+    interpreter.symlink_to(target)
+    profile = write_config(tmp_path, "speech:\n  piper_python_path: tts-env/bin/python\n")
+    assert load_settings(profile).speech.piper_python_path == interpreter
