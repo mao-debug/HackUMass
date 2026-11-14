@@ -1,0 +1,24 @@
+# Phase 1 simulation only. No network requests, inference, or audio output.
+camera:
+  source: sample  # sample (synthetic), image, or webcam
+  image_path: null  # Required for image; relative to this YAML file.
+  webcam_index: 0
+  width: 640
+  height: 480
+  fps: 5.0
+
+simulation:
+  max_frames: 1  # Bounded runs; there is no continuous speech.
+  preview: false  # Opt in only on a machine with a desktop display.
+  output_path: null  # Optional last-frame export, relative to this YAML file.
+
+# Reserved selections for later approved phases; nothing is loaded or downloaded.
+models:
+  object_detection_backend: null
+  object_detection_path: null
+  scene_description_backend: null
+  ocr_backend: null
+  speech_recognition_backend: null
+  text_to_speech_backend: null
+
+log_level: INFO
