@@ -13,8 +13,10 @@ NumPy 1.24.2, PyYAML 6, setuptools 66, Picamera2 0.3.27, and installed OS OpenCV
 supplied terminal output at commit `827577d` also confirms two camera-only
 runs of 3 frames at 640×480 and successful image export. A later run processed
 20 live frames with CPU inference ready on all 20 and a final-frame `person`
-prediction. Image appearance and box alignment remain unchecked. The requested
-Pi 5 with 8 GB RAM remains unverified.
+prediction on a visible hand. In a follow-up controlled test, the user confirmed
+that a person box covered the subject's body. Broader object checks and image
+orientation/color verification remain pending. The requested Pi 5 with 8 GB RAM
+remains unverified.
 
 Use the existing GitHub branch handoff or transfer the source by USB and open
 a terminal in the repository root. SSH setup is not required. Read-only checks:
@@ -166,7 +168,10 @@ CPU inference run, with all 20 frames ready and a final-frame `person` predictio
 seconds. The report's 2.00015 FPS rates use capture timestamp intervals, whereas
 20 / 13.260 gives about 1.51 frames/s over the full processing loop. Neither
 measures isolated inference latency or maximum detector speed; the run requests
-a 2 FPS limit. Visual accuracy and the longer offline acceptance remain pending.
+a 2 FPS limit. The initial prediction covered a visible hand; the user later
+confirmed a box covering a person's body in a separate controlled person test.
+No follow-up JSON metrics were supplied. This confirms one person example;
+broader recognition accuracy and longer offline acceptance remain pending.
 The current software suite has 351 passing tests and one sandboxed
 shared-memory skip; that test passed separately outside the sandbox, for 352
 validated tests. Dependency consistency passed. Mocked hardware/SDK tests and
