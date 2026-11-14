@@ -7,9 +7,11 @@ Either can print the complete text, save a JSON report, and optionally speak
 one short excerpt or export a WAV using a local speech engine. Gemini is used
 for reading the image, not for generating audio.
 
-The connected target remains the existing Pi 4 with Camera Module 3/IMX708,
-Debian 12, Python 3.11.2, Picamera2 0.3.27, and OS OpenCV 4.6.0. Preserve this
-working installation. Phase 2 camera/person checks are recorded in
+The current target is a Pi 5 using the previous Pi 4 SD card. The recorded
+Pi 4 baseline used Camera Module 3/IMX708, Debian 12, Python 3.11.2,
+Picamera2 0.3.27, and OS OpenCV 4.6.0. Preserve the installation and follow the
+[Pi 5 migration checks](pi5-migration.md) to verify the camera and audio on
+the new board. Phase 2 camera/person checks are recorded in
 [hardware.md](hardware.md); the longer detection bench and broader chair
 checks are independent of trying OCR. The supplied Pi Gemini run returned
 HTTP 200 and `OCR=ready` with printed text; that run did not request speech.

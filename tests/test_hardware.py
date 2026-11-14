@@ -79,6 +79,9 @@ def test_json_cli_runs_with_standard_library_only():
     assert report["hardware"]["microphone"]["status"] == "unverified"
     assert report["hardware"]["audio_output"]["status"] == "unverified"
     assert "No devices were opened" in report["note"]
+    assert report["system"]["process_bits"] in (32, 64)
+    assert report["system"]["board_model"] is None or isinstance(report["system"]["board_model"], str)
+    assert report["system"]["memory_total_mb"] is None or isinstance(report["system"]["memory_total_mb"], int)
 
 
 def test_text_cli_is_readable(hardware_module, monkeypatch, capsys):
@@ -152,3 +155,76 @@ def test_linux_distribution_can_be_unavailable(hardware_module, monkeypatch):
 
     monkeypatch.setattr(hardware_module.platform, "freedesktop_os_release", no_os_release)
     assert hardware_module.linux_distribution() is None
+
+
+@pytest.mark.parametrize("model", ["Raspberry Pi 4 Model B Rev 1.5", "Raspberry Pi 5 Model B Rev 1.0"])
+def test_board_model_reads_injected_nul_terminated_device_tree_metadata(hardware_module, tmp_path, model):
+    path = tmp_path / "model"
+    path.write_bytes(model.encode("utf-8") + b"\x00")
+    assert hardware_module.board_model((path,)) == model
+
+
+@pytest.mark.parametrize("primary_data", [None, b"\xff\xfe", b"Raspberry\x00Pi", b"x" * 257])
+def test_missing_malformed_or_oversized_primary_model_uses_fallback(hardware_module, tmp_path, primary_data):
+    primary, fallback = tmp_path / "primary-model", tmp_path / "fallback-model"
+    if primary_data is not None:
+        primary.write_bytes(primary_data)
+    fallback.write_bytes(b"Raspberry Pi 5 Model B Rev 1.0\x00\x00")
+    assert hardware_module.board_model((primary, fallback)) == "Raspberry Pi 5 Model B Rev 1.0"
+
+
+def test_missing_or_empty_metadata_is_unavailable(hardware_module, tmp_path):
+    missing = tmp_path / "missing"
+    empty = tmp_path / "empty"
+    empty.write_bytes(b"\x00")
+    assert hardware_module.board_model((missing, empty)) is None
+    assert hardware_module.memory_total_mb(missing) is None
+
+
+def test_memory_total_is_kernel_reported_mib_not_a_board_capacity_assumption(hardware_module, tmp_path):
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text("MemTotal:        8090368 kB\nMemFree:          500000 kB\n")
+    assert hardware_module.memory_total_mb(meminfo) == 7900
+
+
+@pytest.mark.parametrize("data", [b"MemTotal: -1 kB", b"MemTotal: 8 MB", b"MemTotal: nope kB", b"\xff", b"MemFree: 1024 kB"])
+def test_malformed_memory_metadata_is_unavailable(hardware_module, tmp_path, data):
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_bytes(data)
+    assert hardware_module.memory_total_mb(meminfo) is None
+
+
+def test_report_adds_board_bitness_memory_and_discovery_without_running_commands(hardware_module, monkeypatch, tmp_path):
+    model, meminfo = tmp_path / "model", tmp_path / "meminfo"
+    model.write_bytes(b"Raspberry Pi 5 Model B Rev 1.0\x00")
+    meminfo.write_text("MemTotal: 8388608 kB\n")
+    monkeypatch.setattr(hardware_module.platform, "machine", lambda: "aarch64")
+    monkeypatch.setattr(hardware_module.struct, "calcsize", lambda format: 4)
+    monkeypatch.setattr(hardware_module, "module_available", lambda name: name == "piper")
+    monkeypatch.setattr(hardware_module, "module_origin", lambda name: "/local/piper/__init__.py")
+    monkeypatch.setattr(hardware_module, "distribution_version", lambda name: "test-version" if name == "piper-tts" else None)
+    discovered = []
+
+    def which(name):
+        discovered.append(name)
+        return f"/local/bin/{name}"
+
+    def no_process(*args, **kwargs):
+        pytest.fail("The diagnostic must not execute a hardware/audio command")
+
+    monkeypatch.setattr(hardware_module.shutil, "which", which)
+    monkeypatch.setattr(subprocess, "Popen", no_process)
+
+    report = hardware_module.collect_report(tmp_path, model_paths=(model,), meminfo_path=meminfo)
+
+    assert report["system"]["board_model"] == "Raspberry Pi 5 Model B Rev 1.0"
+    assert report["system"]["architecture"] == "aarch64" and report["system"]["process_bits"] == 32
+    assert report["system"]["memory_total_mb"] == 8192
+    assert report["modules"]["piper"] is True and report["module_origins"]["piper"] == "/local/piper/__init__.py"
+    assert report["distribution_versions"]["piper-tts"] == "test-version"
+    assert {"vcgencmd", "bluetoothctl", "wpctl", "pactl", "paplay", "pw-play", "aplay", "afplay"} <= set(discovered)
+    assert all(report["hardware"][name]["status"] == "unverified" for name in ("camera", "microphone", "audio_output"))
+    text = hardware_module.format_report(report)
+    assert "Board model: Raspberry Pi 5 Model B Rev 1.0" in text
+    assert "Process bitness: 32-bit" in text and "Reported memory total: 8192 MiB" in text
+    assert "do not verify Pi compatibility" in report["note"]

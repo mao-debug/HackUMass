@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 import platform
 import shutil
+import struct
 import sys
 from typing import Any
 
@@ -28,6 +29,7 @@ OPTIONAL_MODULES = (
     "sounddevice",
     "vosk",
     "pyttsx3",
+    "piper",
 )
 OPTIONAL_DISTRIBUTIONS = (
     "numpy",
@@ -37,6 +39,7 @@ OPTIONAL_DISTRIBUTIONS = (
     "picamera2",
     "google-genai",
     "setuptools",
+    "piper-tts",
 )
 OPTIONAL_COMMANDS = (
     "rpicam-hello",
@@ -44,7 +47,22 @@ OPTIONAL_COMMANDS = (
     "tesseract",
     "espeak-ng",
     "say",
+    "vcgencmd",
+    "bluetoothctl",
+    "wpctl",
+    "pactl",
+    "paplay",
+    "pw-play",
+    "aplay",
+    "afplay",
 )
+BOARD_MODEL_PATHS = (
+    Path("/sys/firmware/devicetree/base/model"),
+    Path("/proc/device-tree/model"),
+)
+MEMINFO_PATH = Path("/proc/meminfo")
+_BOARD_MODEL_MAX_BYTES = 256
+_MEMINFO_MAX_BYTES = 65536
 
 
 def module_available(name: str) -> bool:
@@ -91,7 +109,49 @@ def linux_distribution() -> dict[str, str] | None:
     return {key: values[key] for key in ("ID", "VERSION_ID", "PRETTY_NAME") if key in values}
 
 
-def collect_report(device_directory: Path = Path("/dev")) -> dict[str, Any]:
+def board_model(model_paths: tuple[Path, ...] = BOARD_MODEL_PATHS) -> str | None:
+    """Read a bounded UTF-8 device-tree model string, falling back when absent.
+
+    These are fixed local metadata paths, not camera or audio devices. Inject
+    alternate paths in tests; malformed or oversized properties are ignored.
+    """
+    for path in model_paths:
+        try:
+            with path.open("rb") as stream:
+                data = stream.read(_BOARD_MODEL_MAX_BYTES + 1)
+            if len(data) > _BOARD_MODEL_MAX_BYTES:
+                continue
+            value = data.rstrip(b"\x00").decode("utf-8").strip()
+        except (OSError, UnicodeError, ValueError):
+            continue
+        if value and value.isprintable():
+            return value
+    return None
+
+
+def memory_total_mb(meminfo_path: Path = MEMINFO_PATH) -> int | None:
+    """Return kernel-reported memory in MiB, without assuming installed capacity."""
+    try:
+        with meminfo_path.open("rb") as stream:
+            data = stream.read(_MEMINFO_MAX_BYTES + 1)
+        if len(data) > _MEMINFO_MAX_BYTES:
+            return None
+        for line in data.decode("ascii").splitlines():
+            if line.startswith("MemTotal:"):
+                fields = line.split()
+                if len(fields) != 3 or fields[0] != "MemTotal:" or not fields[1].isdigit() or fields[2] != "kB":
+                    return None
+                kibibytes = int(fields[1])
+                return kibibytes // 1024 if kibibytes > 0 else None
+    except (OSError, UnicodeError, ValueError):
+        pass
+    return None
+
+
+def collect_report(
+    device_directory: Path = Path("/dev"), *, model_paths: tuple[Path, ...] = BOARD_MODEL_PATHS,
+    meminfo_path: Path = MEMINFO_PATH,
+) -> dict[str, Any]:
     """Collect hints about this computer; leave physical devices unverified."""
     try:
         camera_paths = sorted(str(path) for path in device_directory.glob("video*"))
@@ -104,6 +164,9 @@ def collect_report(device_directory: Path = Path("/dev")) -> dict[str, Any]:
             "os": platform.system(),
             "release": platform.release(),
             "architecture": platform.machine(),
+            "board_model": board_model(model_paths),
+            "process_bits": struct.calcsize("P") * 8,
+            "memory_total_mb": memory_total_mb(meminfo_path),
             "python": platform.python_version(),
             "python_executable": sys.executable,
             "virtual_environment": sys.prefix != sys.base_prefix,
@@ -132,6 +195,8 @@ def collect_report(device_directory: Path = Path("/dev")) -> dict[str, Any]:
             "Distribution versions come from local metadata; missing metadata "
             "does not mean an apt-provided module is absent. Module origins do "
             "not verify NumPy/OpenCV ABI or camera/model compatibility. "
+            "Board identity and process bitness do not verify Pi compatibility; "
+            "kernel-reported memory may be less than installed RAM. "
             "No devices were opened and no network connections were attempted."
         ),
     }
@@ -144,6 +209,11 @@ def format_report(report: dict[str, Any]) -> str:
         "vidi local prerequisite report",
         f"OS: {system['os']} {system['release']}",
         f"Architecture: {system['architecture']}",
+        f"Board model: {system.get('board_model') or 'unavailable'}",
+        "Process bitness: " + (f"{system['process_bits']}-bit" if system.get("process_bits") else "unavailable"),
+        "Reported memory total: " + (
+            f"{system['memory_total_mb']} MiB" if system.get("memory_total_mb") is not None else "unavailable"
+        ),
         f"Python: {system['python']} ({system['python_executable']})",
         f"Virtual environment: {system['virtual_environment']}",
         "Linux distribution: " + (

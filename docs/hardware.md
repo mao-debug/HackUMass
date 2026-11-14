@@ -6,25 +6,33 @@ equipment has passed an integration test.
 
 | Item | Model or requirement | Status | Verification notes |
 | --- | --- | --- | --- |
-| Current computer | Raspberry Pi 4 | Available | Debian 12, aarch64, Python 3.11.2 confirmed; RAM/board revision to record |
-| Existing desktop access | Partner's monitor and keyboard | Connected to the Pi | Use direct desktop/GitHub or USB handoff; preserve the existing installation |
-| Requested computer | Raspberry Pi 5, 8 GB RAM | Requested; unverified | Delivery and compatible power supply to verify |
-| Connected camera | Camera Module 3, IMX708 | Capture and CPU inference verified in supplied Pi logs | 20 live frames at 640×480, all inference-ready; user confirmed a person box in a follow-up controlled test |
+| Current computer | Raspberry Pi 5 | User reports using the new board with the Pi 4 SD card | Exact board identity, RAM, boot/runtime, power, and cooling checks pending; the initially requested 8 GB is unverified |
+| Previous computer | Raspberry Pi 4 | Available; earlier validation platform | Debian 12/Bookworm, kernel 6.12, aarch64, Python 3.11.2 reported; RAM/board revision not recorded |
+| Existing desktop access | Partner's monitor and keyboard | Previously connected to the Pi 4 | Verify the Pi 5 desktop connection; use direct desktop/GitHub or USB handoff and preserve the existing installation |
+| Connected camera | Camera Module 3, IMX708 | Capture and CPU inference verified on Pi 4; Pi 5 pending | Pi 4: 20 live frames at 640×480, all inference-ready; user confirmed a person box in a follow-up controlled test |
+| Pi 5 camera ribbon | Standard–Mini 15-to-22-pin cable | To verify | Pi 4's 15-to-15-pin ribbon does not fit Pi 5 directly; disconnect power before changing it |
 | Optional AI Camera | IMX500 | Not confirmed as connected | Earlier planned backend remains optional; verify a separate sensor before using its profile |
-| Storage | Installed microSD card | In use | Preserve Debian installation/files; capacity and available space to record |
+| Storage | Existing Pi 4 microSD card | User reports moving it to Pi 5 | Preserve the OS, `.venv-pi`, saved key, models, and artifacts; capacity/free space and Pi 5 boot to record |
 | Portable power | Power bank | To verify | Output capability, runtime, cable, and board compatibility to verify |
+| Pi 5 bench power/cooling | Suitable USB-C supply/cable and cooling | To verify | Record supply profile, fan/heatsink, temperatures, warnings, and throttle flags before sustained work |
 | Voice input | Microphone | To source or verify | Deferred from Phase 2; interface, quality, and placement unverified |
-| Speech output | Headphones or speaker | To source or verify | Deferred from Phase 2; interface and volume control unverified |
+| Speech output | Bluetooth headphones requested | Prior audible speech reported; Pi 5 routing/playback pending | User reported the earlier voice was working but robotic; verify pairing, selected output, and audible playback on the new board |
 | Wearable mounting | Glasses frame and camera accessories | To verify | Fit, attachment, field of view, and cable strain relief to check |
 | Activation input | Optional pushbutton | Optional; unverified | Wiring and software integration deferred |
 
-The connected sensor supersedes the earlier AI Camera assumption. Phase 2 now
-targets Picamera2 capture plus OpenCV DNN CPU inference with the approved
-MobileNet-SSD Caffe model. The OS OpenCV 4.6.0 is installed alongside NumPy
-1.24.2, PyYAML 6, setuptools 66, and Picamera2 0.3.27. No additional inference
+The confirmed Pi 4 sensor superseded the earlier AI Camera assumption. Local
+detection uses Picamera2 capture plus OpenCV DNN CPU inference with the approved
+MobileNet-SSD Caffe model. The retained Pi 4 installation has OS OpenCV 4.6.0
+alongside NumPy 1.24.2, PyYAML 6, setuptools 66, and Picamera2 0.3.27; this
+package stack has not yet been checked on Pi 5. No additional CPU inference
 package is required. See [models.md](models.md) for approved fixed-commit model
 downloads, hashes, and license. macOS fixture replay remains explicitly
 simulated; a real-model synthetic-frame smoke test checks setup only.
+
+Follow [pi5-migration.md](pi5-migration.md) for the current SD-card migration:
+inspect the retained installation, verify the 15-to-22-pin camera connection,
+enumerate the sensor, and run camera-only preview before inference. Every
+physical Pi 5 acceptance result remains pending.
 
 Run the read-only prerequisite report before making changes:
 
@@ -33,7 +41,7 @@ python3 scripts/check_hardware.py
 python3 scripts/check_hardware.py --json
 ```
 
-It uses only Python's standard library. It reports local OS/Python identity,
+It uses only Python's standard library. It reports local board/OS/Python identity,
 discoverable module origins, distribution-metadata versions, command paths, and
 possible camera device paths. It does not import optional hardware packages,
 open devices, record audio, install software, or contact the network. An
@@ -42,15 +50,18 @@ nor its path proves ABI or model compatibility. Camera, microphone, and audio
 operation remain **unverified** in this report.
 
 Use the setup and acceptance procedure in [phase2.md](phase2.md). Preserve the
-working OS package stack; further package changes, unrelated downloads, and
-live cloud uploads require approval. The CPU model download is approved, and
-the optional Google SDK was installed and tested locally on Mac. If the existing OS is
+working OS package stack; further package changes and unrelated downloads
+require specific approval. The CPU model and Pi Google SDK were approved, and
+explicit Gemini snapshot/live image uploads are approved under the existing
+free-tier, no-billing-change scope. A saved key never activates uploads alone.
+Pi eSpeak NG installation is approved; optional Piper downloads remain pending.
+If the existing OS is
 incompatible, stop and propose a supported image on a separately approved spare
 microSD card rather than overwriting the current installation.
 
-## Bench record
+## Pi 4 bench record
 
-The supplied Pi terminal output confirms camera capture at commit `827577d`
+The supplied Pi 4 terminal output confirms camera capture at commit `827577d`
 and a later 20-frame live CPU detection run. The user confirmed that a follow-up
 person test placed the box over the person's body. Broader recognition checks
 and longer offline acceptance remain pending. Continue filling in this record:
@@ -76,13 +87,24 @@ and longer offline acceptance remain pending. Continue filling in this record:
 | Image viewer | Images opened according to the user; `eom` emitted missing Peas/PeasGtk typelib warnings after vidi completed; no package changes made |
 | 100-frame offline report and observed processing rate | Not run |
 | Missing model, unplugged camera, and interruption cleanup | Not tested |
-| Optional one-shot cloud test, project tier, terms review | Not authorized or run |
+| Gemini snapshot detection | User reported a successful Pi snapshot run; broader controlled recognition checks pending |
+| Gemini printed-text reading | Supplied log shows HTTP 200 and OCR `ready`, printing an MLH Hack Days flyer; `artifacts/pi-gemini-reading.json` saved; speech was `not_requested` |
+| Gemini live preview | Supplied run reported approximately 11.21 preview FPS; its Gemini request timed out and uploads paused, so this was not a successful empty detection |
+| Speech/headphone check | User subsequently reported working audible speech and a robotic voice; exact output-device details and a controlled complete read-aloud record were not supplied |
 
 The model score is not measured recognition accuracy. The reported interval
 rates use `(frame_count - 1) / (last_capture_time - first_capture_time)`;
 they omit the initial wait for a frame and the final frame's inference work.
 Processing throughput uses `frame_count / processing_s` instead. The requested
 2 FPS run limit also means this is not a maximum-speed detector benchmark.
+
+## Pi 5 migration record
+
+The user reports moving the same SD card into a new Pi 5. No Pi 5 diagnostic,
+camera, power/thermal, inference, or audible-speech acceptance result is
+recorded yet. Record new evidence using the
+[migration checklist](pi5-migration.md#pi-5-acceptance-record); keep the Pi 4
+timings above identified with their original board.
 
 Use controlled bench scenes before wearable trials. The prototype supplements
 established mobility aids and cannot guarantee obstacle coverage, precise

@@ -1,7 +1,8 @@
 # vidi
 
 vidi is a HackUMass smart glasses prototype for blind and visually impaired
-users. The connected Pi 4 camera reports **IMX708 (Camera Module 3)**. Phase 2
+users. The current target is a **Raspberry Pi 5 using the previous Pi 4 SD
+card**. The camera previously reported **IMX708 (Camera Module 3)**. Phase 2
 uses Picamera2 capture and local OpenCV DNN CPU detection with MobileNet-SSD.
 The separate IMX500 AI Camera backend remains optional for that different
 sensor. macOS supports fixture replay. Explicit one-shot Gemini object detection
@@ -135,11 +136,20 @@ mice. It is not used by the Gemini live command above.
 
 ## Raspberry Pi setup and acceptance
 
-The confirmed Pi 4 runs Debian 12, aarch64, Python 3.11.2, NumPy 1.24.2,
+The user has moved the working Pi 4 SD card into a Pi 5. Start with the
+[Pi 5 migration checks](docs/pi5-migration.md): identify the board/runtime,
+enumerate the camera, test capture without AI, then recheck audio and the
+existing application. The same `config/pi-*.yaml` profiles are shared between
+the boards; no board-specific pipeline or `/dev/videoN` path is selected by
+the application. The Pi 5 RAM capacity and hardware checks remain unverified.
+Inspect the preserved installation before considering package changes.
+
+The recorded **Pi 4 baseline** runs Debian 12, aarch64, Python 3.11.2, NumPy 1.24.2,
 PyYAML 6, setuptools 66, Picamera2 0.3.27, and installed OS OpenCV 4.6.0. The
 partner's monitor and keyboard are connected. **Preserve this installation.**
-The Pi 5 with 8 GB RAM is requested and unverified. The active camera's IMX708
-sensor is not IMX500; do not use an IMX500 model with it.
+Those versions and measurements describe the previous board and must be
+checked on the Pi 5. An IMX708 sensor is not IMX500; changing boards does not
+change the camera model.
 
 Supplied Pi logs confirm two camera-only runs and a 20-frame live CPU detection
 run at 640×480. All 20 live frames were inference-ready; the final frame reported

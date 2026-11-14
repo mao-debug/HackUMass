@@ -1,4 +1,4 @@
-# Camera Module 3 (IMX708): Picamera2 capture and OpenCV CPU inference.
+# Pi 4/Pi 5 with Camera Module 3 (IMX708): Picamera2 capture and OpenCV CPU inference.
 # Obtain the local model explicitly first; see docs/models.md. No downloads at startup.
 camera:
   source: picamera2

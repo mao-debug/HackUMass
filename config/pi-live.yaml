@@ -1,4 +1,4 @@
-# Fast camera preview with separately sampled Gemini identification.
+# Shared Pi 4/Pi 5 camera preview with separately sampled Gemini identification.
 # Requires --continuous --gemini-live; YAML/key alone never authorizes uploads.
 camera:
   source: picamera2

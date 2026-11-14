@@ -1,5 +1,10 @@
 # vidi Phase 2 setup and acceptance
 
+The current target is a user-reported Pi 5 running the moved Pi 4 SD card.
+Follow [Pi 5 migration](pi5-migration.md) before repeating these checks.
+The measurements below are the **previous Pi 4 baseline**, not Pi 5 results;
+the existing application profiles support either board through Picamera2.
+
 The connected camera is **Camera Module 3 (IMX708)**. The primary path is
 Picamera2 capture plus OpenCV DNN CPU inference with MobileNet-SSD. The optional
 IMX500 AI Camera implementation is for a different sensor and cannot run on
@@ -15,8 +20,8 @@ runs of 3 frames at 640×480 and successful image export. A later run processed
 20 live frames with CPU inference ready on all 20 and a final-frame `person`
 prediction on a visible hand. In a follow-up controlled test, the user confirmed
 that a person box covered the subject's body. Broader object checks and image
-orientation/color verification remain pending. The requested Pi 5 with 8 GB RAM
-remains unverified.
+orientation/color verification remain pending. The Pi 5 is now available;
+its RAM capacity and on-device validation remain unverified.
 
 Use the existing GitHub branch handoff or transfer the source by USB and open
 a terminal in the repository root. SSH setup is not required. Read-only checks:
