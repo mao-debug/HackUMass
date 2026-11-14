@@ -11,7 +11,7 @@ from pathlib import Path
 
 from vidi import __version__
 from vidi.core.configuration import ConfigurationError, load_settings, validate_runtime_settings
-from vidi.core.credentials import CredentialError, prompted_gemini_key
+from vidi.core.credentials import CredentialError, prompted_gemini_key, save_gemini_key, saved_gemini_key
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -43,6 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     speech.add_argument("--speech-output", type=Path, help="Synthesize one requested reading or Gemini result to WAV without playback")
     parser.add_argument("--gemini-detect", action="store_true", help="Send ONE final raw image to Gemini for object labels and boxes (cloud opt-in)")
     parser.add_argument("--prompt-key", action="store_true", help="Enter the Gemini key privately for this run; accepts no key argument")
+    parser.add_argument("--save-key", action="store_true", help="Privately enter and save a Gemini key locally, then exit; accepts no key argument")
     parser.add_argument("--describe", action="store_true", help="Send ONE last unannotated image to Gemini (cloud opt-in)")
     parser.add_argument("--question", help="Optional typed question for --describe; does not enable voice input")
     parser.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"))
@@ -53,14 +54,21 @@ def main(argv: list[str] | None = None) -> int:
     """Return 0 on success, 1 on an expected failure, or 130 on interruption."""
     parser = build_parser()
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if any(argument.startswith("--prompt-key=") for argument in arguments):
-        parser.error("--prompt-key takes no key argument. Enter the raw key only at the hidden prompt.")
+    for flag in ("--prompt-key", "--save-key"):
+        if any(argument.startswith(f"{flag}=") for argument in arguments):
+            parser.error(f"{flag} takes no key argument. Enter the raw key only at the hidden prompt.")
     args, unknown = parser.parse_known_args(arguments)
     if unknown:
-        if args.prompt_key:
-            parser.error("--prompt-key takes no key argument. Enter the raw key only at the hidden prompt.")
+        if args.prompt_key or args.save_key:
+            parser.error("Key flags take no key argument. Enter the raw key only at the hidden prompt.")
         parser.error("Unrecognized arguments. Check --help for supported options.")
     try:
+        if args.save_key:
+            if arguments != ["--save-key"]:
+                raise ConfigurationError("Use --save-key by itself to save the key without capturing or uploading an image.")
+            save_gemini_key()
+            print("Gemini key saved locally. Omit --prompt-key on future Gemini runs.")
+            return 0
         settings = load_settings(args.config)
         camera_changes = {}
         if args.image is not None and args.camera_index is not None:
@@ -135,7 +143,12 @@ def main(argv: list[str] | None = None) -> int:
         from vidi.ai.object_detection import DetectionError
         from vidi.core.controller import SimulationError, run_simulation
 
-        with prompted_gemini_key() if args.prompt_key else nullcontext():
+        key_context = (
+            prompted_gemini_key() if args.prompt_key
+            else saved_gemini_key() if args.gemini_detect or args.describe
+            else nullcontext()
+        )
+        with key_context:
             try:
                 if args.gemini_detect:
                     result = run_simulation(settings, gemini_detect=True, speak=args.speak, speech_output=speech_output)

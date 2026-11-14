@@ -211,12 +211,17 @@ run. Optional `--speak` or `--speech-output FILE.wav` uses local speech output
 for the resulting text; it does not call a Gemini speech-generation service.
 
 Both actions require an API key and the pinned Google SDK
-`google-genai==2.34.0`. Use `--prompt-key` for hidden key entry during the run;
-it takes no key argument and requires an interactive terminal. Paste only the
-raw key at the prompt, without an assignment or quotation marks, then press
-Enter. Input is not echoed, and vidi keeps the key only in that process.
-For compatibility, an existing exported `GEMINI_API_KEY` also works without
-the flag. The configured model is `gemini-3.5-flash-lite`, with a
+`google-genai==2.34.0`. Run `python -m vidi --save-key` once in the appropriate
+environment to enter the key privately and save it on that device. It takes
+no key argument, must be used by itself, and makes no network request. The key
+is stored as **unencrypted plain text** in `~/.config/vidi/gemini.key`, outside
+the repository, with owner-only file permissions (`0600`). Future Gemini runs
+use it automatically without prompting. Repeat setup to replace it.
+Use `--prompt-key` with a cloud action for a temporary override instead.
+An existing nonempty exported `GEMINI_API_KEY` takes precedence over the saved
+file; `unset GEMINI_API_KEY` removes a stale export from the current terminal.
+Local detection and OCR never load the saved key. The configured model is
+`gemini-3.5-flash-lite`, with a
 15-second request timeout and a maximum 1024-pixel image edge. Output limits
 are 1024 tokens for object detection and 256 for descriptions; the default
 object limit is 10. No automatic retries or local-backend fallback are used.
@@ -228,20 +233,27 @@ The SDK is approved and installed on the Mac; its existing compatibility
 checks used mocked transport, not a live Gemini request. Approval now also
 covers the pinned Pi SDK and required dependencies from PyPI in `.venv-pi`,
 plus user-triggered non-sensitive test snapshots through a verified free-tier
-project. A live image response has not yet been verified. Keep the budget at
+project. The user reports a successful live Pi Gemini run; controlled quality
+and latency checks remain pending. Keep the budget at
 **$0 new spending**: verify the intended
 project's free tier, billing-disabled state, and model access before a test.
 No billing changes, subscription credits, or student credits are assumed.
 
 After pulling the latest code and preparing the approved Pi SDK environment,
-run from the repository root:
+save the key once from the repository root:
 
 ```sh
-PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-gemini.yaml --gemini-detect --prompt-key --output artifacts/pi-gemini.png --report artifacts/pi-gemini.json
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --save-key
 ```
 
-[docs/gemini.md](docs/gemini.md) explains AI Studio key creation, the hidden
-prompt, the approved Pi SDK setup, and the one-shot test commands.
+Then request a snapshot without entering the key again:
+
+```sh
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-gemini.yaml --gemini-detect --output artifacts/pi-gemini.png --report artifacts/pi-gemini.json
+```
+
+[docs/gemini.md](docs/gemini.md) explains AI Studio key creation, saved keys,
+the optional per-run prompt, the approved Pi SDK setup, and snapshot commands.
 Never paste a key into chat or commit it to GitHub. `.env` is not loaded;
 [.env.example](.env.example) is a template only. Review the current
 [Google data-use terms](https://ai.google.dev/gemini-api/terms) before an

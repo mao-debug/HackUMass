@@ -10,8 +10,8 @@ The detection path is implemented and checked with offline tests. Approval cover
 the pinned Pi SDK and required dependencies from PyPI in `.venv-pi`, plus
 user-triggered non-sensitive test snapshots through a verified free-tier
 project, with no billing changes. The Mac SDK is already installed and its
-existing checks used mocked transport. A live image response has not yet been
-verified; the commands below are the approved setup and test path.
+existing checks used mocked transport. The user reports a successful live Pi
+Gemini run; controlled recognition-quality and latency checks remain pending.
 
 ## Prepare an API key without sending an image
 
@@ -43,7 +43,38 @@ requires billing or verification that cannot be completed within the approved
 scope, keep the offline demo. Do not assume Google AI Pro or student offers
 provide API credits.
 
-## Recommended: use vidi's hidden key prompt
+## Recommended: save the key once on this device
+
+On the Pi, run this setup command from the repository root:
+
+```sh
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --save-key
+```
+
+On Mac, use `.venv/bin/python -m vidi --save-key` instead. Paste only the raw
+key at the hidden prompt and press Enter. Setup saves the key and exits without
+opening the camera, loading the Google SDK, or contacting Google. The flag takes
+no argument and must be used by itself.
+
+The key is stored in **plain text, not encrypted**, at
+`~/.config/vidi/gemini.key`, outside the repository. The vidi directory is
+owner-only (`0700`) and the file is readable and writable only by your user
+(`0600`). This keeps it across terminal sessions and reboots without placing it
+in Git, YAML, shell history, images, or reports. Do not share or copy that file
+into the repository. Run the same setup command again to replace the saved key;
+an interrupted or failed save preserves the previous key.
+
+After setup, omit `--prompt-key` from Gemini commands. vidi loads the saved key
+only for an explicitly requested `--gemini-detect` or `--describe` action.
+Saving a key does not authorize automatic uploads or continuous requests.
+
+Credential priority is `--prompt-key` for a temporary override, then an existing
+nonempty exported `GEMINI_API_KEY`, then the saved file. If an old exported key
+is overriding the saved one, run `unset GEMINI_API_KEY` in that terminal.
+`.env` files are not loaded. To stop using the saved key, delete
+`~/.config/vidi/gemini.key`; this does not revoke it at Google.
+
+## Optional: enter a key for one run only
 
 Use `--prompt-key` with `--gemini-detect` or `--describe`. The flag takes **no
 key argument**. Run the command in an interactive terminal, such as the Pi's
@@ -62,9 +93,8 @@ than falling back to visible entry. `--prompt-key` is accepted only for the
 two explicit Gemini actions; it is not used for local OCR or offline detection.
 Never paste the key into chat, screenshots, GitHub, YAML, logs, or reports.
 
-For compatibility, an already exported `GEMINI_API_KEY` still works when
-`--prompt-key` is omitted. The hidden prompt is the recommended setup and needs
-no shell variable assignment. `.env` files are not loaded.
+Without `--prompt-key`, vidi uses the exported or saved key described above.
+Neither setup method needs a shell variable assignment.
 
 If a key is exposed, revoke it through AI Studio and create a replacement;
 do not include the exposed value when reporting the problem.
@@ -109,19 +139,18 @@ include product improvement and human review;
 check the current [Google terms](https://ai.google.dev/gemini-api/terms), and
 exclude personal papers and bystanders from the demonstration scene.
 
-On the Pi, after the SDK is available and the latest code has been pulled,
-run this single command from the repository root. Paste the raw key only when
-vidi prompts for it:
+On the Pi, after the SDK is available, the latest code has been pulled, and
+the key has been saved once, run this command from the repository root:
 
 ```sh
-PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-gemini.yaml --gemini-detect --prompt-key --output artifacts/pi-gemini.png --report artifacts/pi-gemini.json
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-gemini.yaml --gemini-detect --output artifacts/pi-gemini.png --report artifacts/pi-gemini.json
 ```
 
 On Mac, use a chosen non-sensitive local test image and the existing desktop
 `.venv`:
 
 ```sh
-.venv/bin/python -m vidi --image path/to/test-scene.png --gemini-detect --prompt-key --output artifacts/mac-gemini.png --report artifacts/mac-gemini.json
+.venv/bin/python -m vidi --image path/to/test-scene.png --gemini-detect --output artifacts/mac-gemini.png --report artifacts/mac-gemini.json
 ```
 
 `--gemini-detect` selects the `gemini` detector automatically. Merely setting
@@ -185,7 +214,7 @@ free-tier test scope above. For a Pi description, override the profile's object
 detector with `none`:
 
 ```sh
-PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-gemini.yaml --detector none --describe --prompt-key --report artifacts/pi-description.json
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-gemini.yaml --detector none --describe --report artifacts/pi-description.json
 ```
 
 After the local speech dependency and output device are separately ready, add
