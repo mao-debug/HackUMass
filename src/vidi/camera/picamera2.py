@@ -58,7 +58,7 @@ class _Picamera2Session:
     def _prepare_snapshot(self, settings: CameraSettings) -> None:
         """Apply opt-in settling/focus while the parent startup deadline runs.
 
-        Picamera2 0.3.27 supports asynchronous autofocus_cycle and wait(timeout).
+        Picamera2 0.3.27 and 0.3.31 support autofocus_cycle and wait(timeout).
         A timed-out job must be cancelled and the camera closed rather than
         placing a capture request behind an unfinished autofocus operation.
         """

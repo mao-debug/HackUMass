@@ -2,7 +2,7 @@
 
 vidi is a HackUMass smart glasses prototype for blind and visually impaired
 users. The current target is a **Raspberry Pi 5 using the previous Pi 4 SD
-card**. The camera previously reported **IMX708 (Camera Module 3)**. Phase 2
+card**. The connected camera reports **IMX708 (Camera Module 3)**. Phase 2
 uses Picamera2 capture and local OpenCV DNN CPU detection with MobileNet-SSD.
 The separate IMX500 AI Camera backend remains optional for that different
 sensor. macOS supports fixture replay. Explicit one-shot Gemini object detection
@@ -141,8 +141,20 @@ The user has moved the working Pi 4 SD card into a Pi 5. Start with the
 enumerate the camera, test capture without AI, then recheck audio and the
 existing application. The same `config/pi-*.yaml` profiles are shared between
 the boards; no board-specific pipeline or `/dev/videoN` path is selected by
-the application. The Pi 5 RAM capacity and hardware checks remain unverified.
-Inspect the preserved installation before considering package changes.
+the application. The supplied report identifies **Pi 5 Model B Rev 1.1**, a
+64-bit process, and **8061 MiB of kernel-reported memory**. It runs Bookworm,
+kernel `6.12.115+rpt-rpi-2712`, and Python 3.11.2 inside the retained `.venv-pi`.
+Picamera2 0.3.31 and Google SDK 2.34.0 are reported; OS OpenCV/NumPy/libcamera
+modules and eSpeak NG are discoverable. `rpicam-hello` enumerated IMX708 at
+index 0. A subsequent camera-only application run processed **282 frames at
+21.79 FPS**, demonstrating working native camera/OpenCV/NumPy capture and
+preview. This is the application delivery rate, not a sensor-speed guarantee.
+That run printed nonfatal libpng/GLib messages. Gemini live identification then
+processed **684 frames at 23.43 FPS**, with **four successful responses and zero
+unavailable results**. The user confirmed hearing the Pi 5 eSpeak test word.
+Image colors/clarity, prediction accuracy, power/thermals, and integrated OCR
+read-aloud still need confirmation. No package reinstallation is indicated by
+the supplied results.
 
 The recorded **Pi 4 baseline** runs Debian 12, aarch64, Python 3.11.2, NumPy 1.24.2,
 PyYAML 6, setuptools 66, Picamera2 0.3.27, and installed OS OpenCV 4.6.0. The

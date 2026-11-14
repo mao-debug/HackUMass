@@ -1,10 +1,24 @@
 # Move the existing vidi SD card to Pi 5
 
-The user reports moving the working Pi 4 microSD card to a new Pi 5. The
-card's known baseline is 64-bit Bookworm/Debian 12, aarch64, kernel 6.12,
-Python 3.11.2, Picamera2 0.3.27, and OS OpenCV 4.6.0. **Pi 5 board/RAM,
-camera, power, cooling, audio, and application acceptance checks are pending.**
-The originally requested 8 GB capacity is not a verified property of this board.
+The existing Pi 4 microSD now boots a **Raspberry Pi 5 Model B Rev 1.1**. The
+supplied report confirms Debian 12/Bookworm, kernel
+`6.12.115+rpt-rpi-2712`, aarch64 with a 64-bit Python process, and Python 3.11.2
+in `/home/simaofea/vidi/.venv-pi/bin/python`. Kernel-visible memory is 8061 MiB,
+consistent with an 8 GB board; exact physical capacity is not independently
+verified. IMX708 enumerates at camera index 0. The camera-only preview captured
+282 frames at a measured **21.79 FPS** with detector `none` and returned normally
+after q. A subsequent Gemini live run captured 684 frames at **23.43 FPS**,
+with four HTTP 200 replies, four successful analyses, and zero unavailable
+results. The user separately confirmed hearing the local eSpeak test word on
+Pi 5. **Image colors/clarity, recognition accuracy, power/thermal behavior,
+local-model inference, and integrated OCR/audio remain pending.**
+
+Discovery reports NumPy 1.24.2, PyYAML 6, setuptools 66.1.1, Google SDK
+2.34.0, and Picamera2 0.3.31. The earlier Pi 4 record had Picamera2 0.3.27 and
+OpenCV 4.6.0. The completed Pi 5 application run now demonstrates usable native
+capture, OpenCV/NumPy processing, and preview. Its exact imported OpenCV version
+is still unreported. Null `opencv-python` package metadata does not mean apt's
+OpenCV module is absent. No installation or update is indicated by this evidence.
 
 Raspberry Pi's [Pi 5 FAQ](https://www.raspberrypi.com/products/raspberry-pi-5/)
 supports Bookworm, and the current
@@ -39,9 +53,13 @@ to separate approval; they are not needed for migration.
 
 ## Inspect this boot without changing the installation
 
-From the Pi desktop terminal and repository root, run:
+From the Pi desktop terminal, enter the repository before using relative
+paths. The earlier `.venv-pi/bin/python: No such file` occurred in `~` and was
+resolved with `cd ~/vidi`; it did not require rebuilding the environment.
+These commands can record or repeat the identity checks:
 
 ```sh
+cd ~/vidi
 tr -d '\000' < /sys/firmware/devicetree/base/model
 cat /etc/os-release
 uname -r
@@ -50,12 +68,12 @@ getconf LONG_BIT
 /usr/bin/python3 --version
 free -h
 df -h /
-/usr/bin/python3 scripts/check_hardware.py --json
+PYTHONNOUSERSITE=1 .venv-pi/bin/python scripts/check_hardware.py --json
 ```
 
-The model should identify Pi 5; record the actual text, OS, architecture,
-Python bitness, memory, and free space. OS-visible memory is not the same as
-the board's advertised RAM capacity. The diagnostic discovers package origins,
+The model now identifies Pi 5; preserve the supplied report and record remaining
+free-space observations. OS-visible memory is not the same as the board's
+advertised RAM capacity. The diagnostic discovers package origins,
 versions where available, and commands without importing optional hardware
 packages or opening devices. Discovery does not certify that those packages
 work on the new board.
@@ -65,8 +83,13 @@ Check the retained application environment separately:
 ```sh
 .venv-pi/bin/python --version
 PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --version
-command -v rpicam-hello libcamera-hello vcgencmd bluetoothctl pactl wpctl espeak-ng paplay pw-play
+command -v rpicam-hello libcamera-hello vcgencmd bluetoothctl pactl wpctl espeak-ng paplay pw-play aplay
 ```
+
+The supplied report finds rpicam, vcgencmd, Bluetooth/audio tools, and eSpeak NG.
+Piper is absent from the camera environment and its downloads remain pending;
+it would use its own optional `.venv-tts`. Missing local Tesseract and optional
+microphone modules do not block the existing Gemini/camera workflow.
 
 If a runtime or required package is missing, stop and record the exact error.
 Reuse existing package approvals where applicable; request approval before new
@@ -87,7 +110,10 @@ the migrated Camera Module 3 should enumerate as IMX708. An empty list calls
 for checking the powered-off ribbon connection and actual installed stack
 before attempting AI. The official
 [camera enumeration reference](https://www.raspberrypi.com/documentation/accessories/camera-software.html#list-cameras)
-describes the output.
+describes the output. The supplied Pi 5 enumeration already reports camera 0
+as IMX708 at 4608×2592, under
+`/base/axi/pcie@1000120000/rp1/i2c@80000/imx708@1a`. These are sensor-enumeration
+details, not delivered capture dimensions or proof of successful capture.
 
 Then run this local camera-only check:
 
@@ -101,6 +127,22 @@ performance must be measured. Inspect colors, focus, orientation, and whether
 the preview updates smoothly. Press q/Esc or Ctrl+C to stop and release the
 camera; Ctrl+C normally returns status 130. The output is a final still image,
 not a video recording.
+
+The user has completed this exact command: 282 frames, 21.79 measured FPS,
+0 successful analyses and 0 unavailable results, as expected with detector
+`none`. It returned to the terminal prompt after q without a traceback or fatal
+error. The log identifies libcamera `0.5.2+99-bfd68f78`, libpisp v1.2.1
+(`981977ff21f3`), tuning `rpi/pisp/imx708.json`, and the `BCM2712_D0` PiSP
+pipeline with CFE `/dev/media3` and ISP `/dev/media1`. Main and raw streams were
+640×480 RGB888 and 1536×864 PISP_COMP1. This validates the exercised capture/
+preview path, not recognition or a guaranteed 30 FPS rate.
+
+Repeated libpng `iCCP: known incorrect sRGB profile` warnings and one
+GLib-GObject `g_object_unref` critical were printed; they were nonfatal in this
+completed run. Their origins are unconfirmed, so these messages alone do not
+justify reinstalling camera drivers. Image colors/clarity remain unanswered.
+The command requested the image/report exports above with no reported export
+error; their contents have not been independently inspected.
 
 If `vcgencmd` was found, record these before and after the preview:
 
@@ -127,8 +169,12 @@ does not connect; do not delete system Bluetooth state as a first step.
 Follow [Phase 3 audio checks](phase3.md#bluetooth-headphones-on-the-pi) and
 Raspberry Pi's [audio guide](https://pip-assets.raspberrypi.com/categories/1259-audio-camera-and-display/documents/RP-008124-WP/Choosing-an-Audio-option.pdf).
 The user reported audible speech on the previous board but described its voice
-as robotic. Pi 5 headphone routing and playback must be checked again.
-eSpeak NG installation is approved. Missing diagnostic tools do not authorize
+as robotic. On the Pi 5, the user subsequently confirmed hearing
+`espeak-ng vidi` after the headphone/output check. This passes the basic local
+audio test; integrated OCR read-aloud and voice quality are separate checks.
+The current report finds eSpeak NG, paplay, pw-play, aplay, pactl, and wpctl;
+their presence does not verify an active server, selected output, or audibility.
+eSpeak NG installation was approved. Missing diagnostic tools do not authorize
 replacing the audio server.
 
 ## Resume one capability at a time
@@ -167,15 +213,23 @@ completion, and actual audibility as separate acceptance results.
 
 ## Pi 5 acceptance record
 
-All entries remain pending until new evidence is supplied. Earlier Pi 4
-measurements remain in [hardware.md](hardware.md) and do not transfer to Pi 5.
+Identity/discovery, enumeration, camera-only preview, Gemini live identification,
+and basic local speech now have supplied evidence. Other checks remain pending.
+The full record is in
+[hardware.md](hardware.md#pi-5-migration-record). Earlier Pi 4 measurements do
+not transfer to Pi 5.
 
 | Check | Status |
 | --- | --- |
-| Board identity, revision/RAM, OS/kernel, architecture/Python | Pending |
-| Retained environment, package origins, local model assets | Pending |
-| Standard–Mini ribbon and IMX708 enumeration | Pending |
-| Camera-only preview, saved image, actual rate and cleanup | Pending |
+| Board identity and runtime | Confirmed Pi 5 Model B Rev 1.1, Debian 12/Bookworm, kernel `6.12.115+rpt-rpi-2712`, aarch64/64-bit, Python 3.11.2 in retained venv |
+| Memory | 8061 MiB kernel-visible, consistent with 8 GB; physical capacity not independently verified |
+| Package discovery/native operation | Reported versions/origins; usable capture, OpenCV/NumPy processing, and preview demonstrated; exact OpenCV version unreported |
+| Local model assets | Retained from Pi 4; Pi 5 load/inference pending |
+| IMX708 enumeration | Confirmed index 0 at 4608×2592; physical cable inspection not recorded |
+| Camera-only preview/rate/completion | Passed: 282 frames, measured 21.79 FPS, normal return after q; detector `none` |
+| Image quality and exports | Colors/clarity pending; image/report exports requested without reported error, contents not independently inspected |
 | Supply/cable, cooling, temperatures and throttle flags | Pending |
-| Bluetooth pairing, selected output and audible local speech | Pending |
-| Optional local detection and explicit Gemini runs | Pending |
+| Audible local speech | Passed by user confirmation: heard `espeak-ng vidi` on Pi 5 after checking headphones/output |
+| Integrated OCR read-aloud and neural voice | Pending |
+| Gemini live identification | Passed: 684 frames, measured 23.43 FPS, 4 successful responses/HTTP 200, 0 unavailable; prediction accuracy not independently verified |
+| Optional local detection and Gemini OCR read-aloud | Pending |

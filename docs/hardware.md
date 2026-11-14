@@ -6,33 +6,42 @@ equipment has passed an integration test.
 
 | Item | Model or requirement | Status | Verification notes |
 | --- | --- | --- | --- |
-| Current computer | Raspberry Pi 5 | User reports using the new board with the Pi 4 SD card | Exact board identity, RAM, boot/runtime, power, and cooling checks pending; the initially requested 8 GB is unverified |
+| Current computer | Raspberry Pi 5 Model B Rev 1.1 | Board/boot/runtime identity confirmed in supplied report | Kernel sees 8061 MiB, consistent with an 8 GB board; exact physical RAM capacity not independently verified; power/cooling checks pending |
 | Previous computer | Raspberry Pi 4 | Available; earlier validation platform | Debian 12/Bookworm, kernel 6.12, aarch64, Python 3.11.2 reported; RAM/board revision not recorded |
 | Existing desktop access | Partner's monitor and keyboard | Previously connected to the Pi 4 | Verify the Pi 5 desktop connection; use direct desktop/GitHub or USB handoff and preserve the existing installation |
-| Connected camera | Camera Module 3, IMX708 | Capture and CPU inference verified on Pi 4; Pi 5 pending | Pi 4: 20 live frames at 640×480, all inference-ready; user confirmed a person box in a follow-up controlled test |
-| Pi 5 camera ribbon | Standard–Mini 15-to-22-pin cable | To verify | Pi 4's 15-to-15-pin ribbon does not fit Pi 5 directly; disconnect power before changing it |
+| Connected camera | Camera Module 3, IMX708 | Pi 5 enumeration and camera-only preview passed | Index 0; 282 frames at 640×480, measured 21.79 FPS; color/clarity assessment pending |
+| Pi 5 camera ribbon | Standard–Mini 15-to-22-pin cable | Sensor detected; exact cable/strain-relief inspection not recorded | Pi 4's 15-to-15-pin ribbon does not fit Pi 5 directly; disconnect power before changing it |
 | Optional AI Camera | IMX500 | Not confirmed as connected | Earlier planned backend remains optional; verify a separate sensor before using its profile |
-| Storage | Existing Pi 4 microSD card | User reports moving it to Pi 5 | Preserve the OS, `.venv-pi`, saved key, models, and artifacts; capacity/free space and Pi 5 boot to record |
+| Storage | Existing Pi 4 microSD card | Moved to Pi 5; boot identity reported | Preserve the OS, `.venv-pi`, saved key, models, and artifacts; capacity/free space to record |
 | Portable power | Power bank | To verify | Output capability, runtime, cable, and board compatibility to verify |
 | Pi 5 bench power/cooling | Suitable USB-C supply/cable and cooling | To verify | Record supply profile, fan/heatsink, temperatures, warnings, and throttle flags before sustained work |
 | Voice input | Microphone | To source or verify | Deferred from Phase 2; interface, quality, and placement unverified |
-| Speech output | Bluetooth headphones requested | Prior audible speech reported; Pi 5 routing/playback pending | User reported the earlier voice was working but robotic; verify pairing, selected output, and audible playback on the new board |
+| Speech output | Bluetooth headphones | Pi 5 basic speech test passed by user confirmation | User heard `espeak-ng vidi` on the new board; full OCR read-aloud and optional neural voice still need checking |
 | Wearable mounting | Glasses frame and camera accessories | To verify | Fit, attachment, field of view, and cable strain relief to check |
 | Activation input | Optional pushbutton | Optional; unverified | Wiring and software integration deferred |
 
-The confirmed Pi 4 sensor superseded the earlier AI Camera assumption. Local
-detection uses Picamera2 capture plus OpenCV DNN CPU inference with the approved
-MobileNet-SSD Caffe model. The retained Pi 4 installation has OS OpenCV 4.6.0
-alongside NumPy 1.24.2, PyYAML 6, setuptools 66, and Picamera2 0.3.27; this
-package stack has not yet been checked on Pi 5. No additional CPU inference
-package is required. See [models.md](models.md) for approved fixed-commit model
-downloads, hashes, and license. macOS fixture replay remains explicitly
-simulated; a real-model synthetic-frame smoke test checks setup only.
+The IMX708 sensor supersedes the earlier AI Camera assumption. Local detection
+uses Picamera2 capture plus OpenCV DNN CPU inference with the approved
+MobileNet-SSD Caffe model. The Pi 5 report finds NumPy 1.24.2, PyYAML 6,
+setuptools 66.1.1, Google SDK 2.34.0, and Picamera2 0.3.31; the earlier Pi 4
+record used Picamera2 0.3.27. OS-provided `cv2` and `libcamera` are discoverable.
+The subsequent Pi 5 application run demonstrated usable native camera capture,
+OpenCV/NumPy processing, and preview; the exact imported OpenCV version is still
+unreported. Missing `opencv-python` distribution metadata does not mean apt's
+`cv2` is absent. No new installation or update is indicated by this evidence.
+See [models.md](models.md) for approved fixed-commit model
+assets, hashes, and license. macOS fixture replay remains simulated; a
+real-model synthetic-frame smoke test checks setup only.
 
 Follow [pi5-migration.md](pi5-migration.md) for the current SD-card migration:
 inspect the retained installation, verify the 15-to-22-pin camera connection,
-enumerate the sensor, and run camera-only preview before inference. Every
-physical Pi 5 acceptance result remains pending.
+enumerate the sensor, and run camera-only preview before inference. Pi 5
+identity, enumeration, and camera-only preview are confirmed. Measured preview
+rate was 21.79 FPS in the camera-only check. A subsequent Gemini live run
+captured 684 frames at 23.43 FPS with four successful responses and no
+unavailable results. The user also confirmed hearing the Pi 5 eSpeak test word.
+Image quality, recognition accuracy, power/thermal behavior, local-model
+inference, and integrated OCR read-aloud remain pending.
 
 Run the read-only prerequisite report before making changes:
 
@@ -100,11 +109,40 @@ Processing throughput uses `frame_count / processing_s` instead. The requested
 
 ## Pi 5 migration record
 
-The user reports moving the same SD card into a new Pi 5. No Pi 5 diagnostic,
-camera, power/thermal, inference, or audible-speech acceptance result is
-recorded yet. Record new evidence using the
-[migration checklist](pi5-migration.md#pi-5-acceptance-record); keep the Pi 4
-timings above identified with their original board.
+The supplied Pi 5 reports confirm identity/discovery and a subsequent working
+camera-only application run. Discovery alone does not certify native-library
+compatibility; the run provides separate evidence for the exercised capture,
+OpenCV/NumPy processing, and preview path.
+
+| Field | Observed value |
+| --- | --- |
+| Board model | Raspberry Pi 5 Model B Rev 1.1 |
+| OS and kernel | Debian 12/Bookworm; `6.12.115+rpt-rpi-2712` |
+| Architecture/process bitness | aarch64 / 64-bit |
+| Kernel-visible memory | 8061 MiB, consistent with an 8 GB board; physical capacity not independently established |
+| Python runtime | 3.11.2; `/home/simaofea/vidi/.venv-pi/bin/python`; virtual environment true |
+| Distribution metadata | NumPy 1.24.2; PyYAML 6; setuptools 66.1.1; Google SDK 2.34.0; Picamera2 0.3.31 |
+| Native module discovery | OS `cv2` and `libcamera` present; `opencv-python` metadata null is expected for apt-provided OpenCV and is not an absent-module result |
+| Camera enumeration | Index 0, IMX708, 4608×2592; `/base/axi/pcie@1000120000/rp1/i2c@80000/imx708@1a` |
+| Camera software/pipeline | libcamera `0.5.2+99-bfd68f78`; libpisp v1.2.1, hash `981977ff21f3`; tuning `rpi/pisp/imx708.json`; PiSP variant `BCM2712_D0`, CFE `/dev/media3`, ISP `/dev/media1` |
+| Configured streams | Main 640×480 RGB888; raw 1536×864 PISP_COMP1 |
+| Camera-only continuous run | 282 captured frames, measured 21.79 FPS versus requested 30 FPS; detector `none`, 0 successful analyses and 0 unavailable results, as expected with no detector |
+| Preview completion | User returned to the normal terminal prompt after q; no traceback or fatal error reported; colors/clarity not yet assessed |
+| Requested exports | `artifacts/pi5-camera.png` and `artifacts/pi5-camera.json`; no export error reported, but file contents were not independently read or viewed |
+| Nonfatal warnings in this run | Repeated libpng `iCCP: known incorrect sRGB profile` and one GLib-GObject `g_object_unref` critical; run finished; warning origins unconfirmed and no driver reinstall justified by these messages alone |
+| Command discovery | eSpeak NG, rpicam, vcgencmd, bluetoothctl, wpctl, pactl, paplay, pw-play, and aplay available |
+| Optional dependencies | Piper absent in camera environment, downloads pending; local Tesseract and optional microphone modules absent; these are not migration compatibility failures |
+| Earlier environment-path error | `.venv-pi/bin/python` was run from `~`; resolved after `cd ~/vidi`; environment rebuild not needed |
+| Local speech | User confirmed hearing `espeak-ng vidi` on Pi 5 after the headphone/output check |
+| Gemini live identification | 684 camera frames, measured 23.43 FPS, 4 successful analyses, 0 unavailable results; four HTTP 200 replies |
+| Gemini returned predictions | Frame 1: ceiling/light fixture/vent/light; frame 229: person/light; frame 377: marker/person; frame 569: cell phone/person. These are model outputs, not independently checked ground truth. |
+| Gemini live warnings/completion | Repeated libpng iCCP warnings remained nonfatal; run completed normally with the final capture summary |
+| Pending acceptance | Exact OpenCV version, image colors/clarity and exported-file inspection, recognition accuracy, local inference, supply/temperature/throttle checks, and integrated OCR read-aloud |
+
+Continue with the remaining checks in the
+[migration checklist](pi5-migration.md#pi-5-acceptance-record). Keep all Pi 4
+measurements attributed to their original board. No package installation or
+update is required by the supplied report so far.
 
 Use controlled bench scenes before wearable trials. The prototype supplements
 established mobility aids and cannot guarantee obstacle coverage, precise
