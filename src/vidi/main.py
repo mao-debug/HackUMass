@@ -4,17 +4,21 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 
 from vidi import __version__
 from vidi.core.configuration import ConfigurationError, load_settings, validate_runtime_settings
+from vidi.core.credentials import CredentialError, prompted_gemini_key
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Describe local backends and the per-run cloud opt-in."""
     parser = argparse.ArgumentParser(
-        description="vidi Phase 3: camera detection, Gemini snapshots, printed-text reading, and optional speech."
+        description="vidi Phase 3: camera detection, Gemini snapshots, printed-text reading, and optional speech.",
+        allow_abbrev=False,
     )
     parser.add_argument("--version", action="version", version=f"vidi {__version__}")
     parser.add_argument("--config", type=Path, help="YAML path; omitted means built-in defaults")
@@ -38,6 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
     speech.add_argument("--speak", action="store_true", help="Speak one requested reading or Gemini result")
     speech.add_argument("--speech-output", type=Path, help="Synthesize one requested reading or Gemini result to WAV without playback")
     parser.add_argument("--gemini-detect", action="store_true", help="Send ONE final raw image to Gemini for object labels and boxes (cloud opt-in)")
+    parser.add_argument("--prompt-key", action="store_true", help="Enter the Gemini key privately for this run; accepts no key argument")
     parser.add_argument("--describe", action="store_true", help="Send ONE last unannotated image to Gemini (cloud opt-in)")
     parser.add_argument("--question", help="Optional typed question for --describe; does not enable voice input")
     parser.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"))
@@ -46,7 +51,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     """Return 0 on success, 1 on an expected failure, or 130 on interruption."""
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if any(argument.startswith("--prompt-key=") for argument in arguments):
+        parser.error("--prompt-key takes no key argument. Enter the raw key only at the hidden prompt.")
+    args, unknown = parser.parse_known_args(arguments)
+    if unknown:
+        if args.prompt_key:
+            parser.error("--prompt-key takes no key argument. Enter the raw key only at the hidden prompt.")
+        parser.error("Unrecognized arguments. Check --help for supported options.")
     try:
         settings = load_settings(args.config)
         camera_changes = {}
@@ -114,40 +127,43 @@ def main(argv: list[str] | None = None) -> int:
             settings, describe=args.describe, read_text=args.read_text,
             speak=args.speak, speech_output=speech_output, gemini_detect=args.gemini_detect,
         )
+        if args.prompt_key and not (args.gemini_detect or args.describe):
+            raise ConfigurationError("--prompt-key requires --gemini-detect or --describe.")
 
         # Keep --help/--version available even if OpenCV has not been installed.
         from vidi.camera.capture import CaptureError
         from vidi.ai.object_detection import DetectionError
         from vidi.core.controller import SimulationError, run_simulation
 
-        try:
-            if args.gemini_detect:
-                result = run_simulation(settings, gemini_detect=True, speak=args.speak, speech_output=speech_output)
-                if result.last_inference is None or result.last_inference.status != "ready" or result.speech.status == "failed":
+        with prompted_gemini_key() if args.prompt_key else nullcontext():
+            try:
+                if args.gemini_detect:
+                    result = run_simulation(settings, gemini_detect=True, speak=args.speak, speech_output=speech_output)
+                    if result.last_inference is None or result.last_inference.status != "ready" or result.speech.status == "failed":
+                        return 1
+                elif args.read_text:
+                    result = run_simulation(settings, read_text=True, speak=args.speak, speech_output=speech_output)
+                    if result.ocr.status == "failed" or result.speech.status == "failed":
+                        return 1
+                elif args.describe:
+                    options = {"describe": True, "question": args.question or "What is in front of me?"}
+                    if args.speak or speech_output is not None:
+                        options.update(speak=args.speak, speech_output=speech_output)
+                    result = run_simulation(settings, **options)
+                    if result.description_status != "ready" or result.speech.status == "failed":
+                        return 1
+                else:
+                    result = run_simulation(settings)
+                if (settings.models.object_detection_backend or "none") != "none" and result.ready_frames == 0:
+                    logging.getLogger(__name__).error(
+                        "No inference results arrived during this run. Check model startup and camera diagnostics; "
+                        "increase --max-frames for warm-up."
+                    )
                     return 1
-            elif args.read_text:
-                result = run_simulation(settings, read_text=True, speak=args.speak, speech_output=speech_output)
-                if result.ocr.status == "failed" or result.speech.status == "failed":
-                    return 1
-            elif args.describe:
-                options = {"describe": True, "question": args.question or "What is in front of me?"}
-                if args.speak or speech_output is not None:
-                    options.update(speak=args.speak, speech_output=speech_output)
-                result = run_simulation(settings, **options)
-                if result.description_status != "ready" or result.speech.status == "failed":
-                    return 1
-            else:
-                result = run_simulation(settings)
-            if (settings.models.object_detection_backend or "none") != "none" and result.ready_frames == 0:
-                logging.getLogger(__name__).error(
-                    "No inference results arrived during this run. Check model startup and camera diagnostics; "
-                    "increase --max-frames for warm-up."
-                )
+            except (CaptureError, DetectionError, SimulationError) as exc:
+                logging.getLogger(__name__).error("%s", exc)
                 return 1
-        except (CaptureError, DetectionError, SimulationError) as exc:
-            logging.getLogger(__name__).error("%s", exc)
-            return 1
-    except (ConfigurationError, OSError) as exc:
+    except (ConfigurationError, CredentialError, OSError) as exc:
         logging.getLogger(__name__).error("%s", exc)
         return 1
     except ImportError as exc:

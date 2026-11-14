@@ -10,9 +10,8 @@ The detection path is implemented and checked with offline tests. Approval cover
 the pinned Pi SDK and required dependencies from PyPI in `.venv-pi`, plus
 user-triggered non-sensitive test snapshots through a verified free-tier
 project, with no billing changes. The Mac SDK is already installed and its
-existing checks used mocked transport. Pi SDK installation, local key setup,
-and a live image request have not yet been performed; the commands below are
-the approved setup and test path.
+existing checks used mocked transport. A live image response has not yet been
+verified; the commands below are the approved setup and test path.
 
 ## Prepare an API key without sending an image
 
@@ -27,7 +26,7 @@ and open the [AI Studio API Keys page](https://aistudio.google.com/apikey).
    use a verified free-tier project with no billing account attached. Do not
    click an upgrade, enable billing, add payment details, or prepay credits.
 4. If a usable key is not already present, use **Create API key** in the
-   selected project. Copy it privately for the terminal step below.
+   selected project. Copy it privately for vidi's hidden prompt below.
 
 Google's current guide says new AI Studio keys use authorization keys; old
 unrestricted standard keys are rejected. Use the current key-creation flow
@@ -44,42 +43,28 @@ requires billing or verification that cannot be completed within the approved
 scope, keep the offline demo. Do not assume Google AI Pro or student offers
 provide API credits.
 
-## Set the key privately in Bash
+## Recommended: use vidi's hidden key prompt
 
-Use the same terminal shell that will launch vidi. These steps store the key
-only in that shell's environment. They do not make a Gemini request. Start
-Bash first, including on a Mac whose usual shell is zsh:
+Use `--prompt-key` with `--gemini-detect` or `--describe`. The flag takes **no
+key argument**. Run the command in an interactive terminal, such as the Pi's
+Terminal application or VS Code's terminal, rather than a non-interactive
+output panel or pipe.
 
-```sh
-bash
-```
+When vidi displays its key prompt, paste **only the raw API key**, without an
+assignment such as `GEMINI_API_KEY=`, quotation marks, or another command.
+Press Enter. No characters are shown while the key is entered; this is
+expected. The key is read during that vidi run and applies only to its process.
+vidi restores any previous environment value afterward and does not write
+the prompted key to disk or shell history.
 
-Run this command by itself:
+If the terminal cannot provide hidden input, vidi refuses the prompt rather
+than falling back to visible entry. `--prompt-key` is accepted only for the
+two explicit Gemini actions; it is not used for local OCR or offline detection.
+Never paste the key into chat, screenshots, GitHub, YAML, logs, or reports.
 
-```sh
-read -r -s GEMINI_API_KEY
-```
-
-Paste the raw key without quotation marks and press Enter. Input is hidden.
-**Only after entering the key**, run the separate export command:
-
-```sh
-export GEMINI_API_KEY
-```
-
-Do not paste all three steps at once: a following command could be consumed as
-the key input. Do not echo the variable, include the key in shell commands,
-paste it into chat, or put it in screenshots, GitHub, YAML, logs, or reports.
-Use ordinary ASCII command text; copied curly quotation marks caused earlier
-shell trouble. The commands above need no quoted key assignment.
-
-vidi reads `GEMINI_API_KEY`; it does not load `.env` files. A key exported in
-one terminal is not automatically available in another terminal or a separately
-launched VS Code process. Remove the variable when finished:
-
-```sh
-unset GEMINI_API_KEY
-```
+For compatibility, an already exported `GEMINI_API_KEY` still works when
+`--prompt-key` is omitted. The hidden prompt is the recommended setup and needs
+no shell variable assignment. `.env` files are not loaded.
 
 If a key is exposed, revoke it through AI Studio and create a replacement;
 do not include the exposed value when reporting the problem.
@@ -124,18 +109,19 @@ include product improvement and human review;
 check the current [Google terms](https://ai.google.dev/gemini-api/terms), and
 exclude personal papers and bystanders from the demonstration scene.
 
-On the Pi, after the SDK and key setup above, run from the repository root in
-the Bash session holding the exported key:
+On the Pi, after the SDK is available and the latest code has been pulled,
+run this single command from the repository root. Paste the raw key only when
+vidi prompts for it:
 
 ```sh
-PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-gemini.yaml --gemini-detect --output artifacts/pi-gemini.png --report artifacts/pi-gemini.json
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-gemini.yaml --gemini-detect --prompt-key --output artifacts/pi-gemini.png --report artifacts/pi-gemini.json
 ```
 
 On Mac, use a chosen non-sensitive local test image and the existing desktop
 `.venv`:
 
 ```sh
-.venv/bin/python -m vidi --image path/to/test-scene.png --gemini-detect --output artifacts/mac-gemini.png --report artifacts/mac-gemini.json
+.venv/bin/python -m vidi --image path/to/test-scene.png --gemini-detect --prompt-key --output artifacts/mac-gemini.png --report artifacts/mac-gemini.json
 ```
 
 `--gemini-detect` selects the `gemini` detector automatically. Merely setting
@@ -199,7 +185,7 @@ free-tier test scope above. For a Pi description, override the profile's object
 detector with `none`:
 
 ```sh
-PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-gemini.yaml --detector none --describe --report artifacts/pi-description.json
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-gemini.yaml --detector none --describe --prompt-key --report artifacts/pi-description.json
 ```
 
 After the local speech dependency and output device are separately ready, add
@@ -214,7 +200,8 @@ Pi eSpeak NG installation and audio acceptance remain pending as described in
 [phase3.md](phase3.md).
 
 Offline CPU/camera evidence remains in [hardware.md](hardware.md). Current Mac
-validation reports **632 passed, 4 skipped**, outside the restricted sandbox.
+validation reports **687 passed, 4 skipped**, outside the restricted sandbox,
+including mocked private-prompt and environment-restoration checks.
 The skips are optional Tesseract/eSpeak NG engine checks; Gemini's SDK tests
 run with blocked sockets, fake credentials, and local MockTransport responses,
 including one-request behavior for 200/429/503 outcomes. Dependency consistency

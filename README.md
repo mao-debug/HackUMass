@@ -210,8 +210,13 @@ description and accepts an optional `--question`. Choose one cloud action per
 run. Optional `--speak` or `--speech-output FILE.wav` uses local speech output
 for the resulting text; it does not call a Gemini speech-generation service.
 
-Both actions require `GEMINI_API_KEY` and the pinned Google SDK
-`google-genai==2.34.0`. The configured model is `gemini-3.5-flash-lite`, with a
+Both actions require an API key and the pinned Google SDK
+`google-genai==2.34.0`. Use `--prompt-key` for hidden key entry during the run;
+it takes no key argument and requires an interactive terminal. Paste only the
+raw key at the prompt, without an assignment or quotation marks, then press
+Enter. Input is not echoed, and vidi keeps the key only in that process.
+For compatibility, an existing exported `GEMINI_API_KEY` also works without
+the flag. The configured model is `gemini-3.5-flash-lite`, with a
 15-second request timeout and a maximum 1024-pixel image edge. Output limits
 are 1024 tokens for object detection and 256 for descriptions; the default
 object limit is 10. No automatic retries or local-backend fallback are used.
@@ -223,13 +228,20 @@ The SDK is approved and installed on the Mac; its existing compatibility
 checks used mocked transport, not a live Gemini request. Approval now also
 covers the pinned Pi SDK and required dependencies from PyPI in `.venv-pi`,
 plus user-triggered non-sensitive test snapshots through a verified free-tier
-project. Pi SDK installation, local key setup, and a live request have not yet
-been performed. Keep the budget at **$0 new spending**: verify the intended
+project. A live image response has not yet been verified. Keep the budget at
+**$0 new spending**: verify the intended
 project's free tier, billing-disabled state, and model access before a test.
 No billing changes, subscription credits, or student credits are assumed.
 
-[docs/gemini.md](docs/gemini.md) explains AI Studio key creation, hidden Bash
-entry, the approved Pi SDK setup, and the one-shot test commands.
+After pulling the latest code and preparing the approved Pi SDK environment,
+run from the repository root:
+
+```sh
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-gemini.yaml --gemini-detect --prompt-key --output artifacts/pi-gemini.png --report artifacts/pi-gemini.json
+```
+
+[docs/gemini.md](docs/gemini.md) explains AI Studio key creation, the hidden
+prompt, the approved Pi SDK setup, and the one-shot test commands.
 Never paste a key into chat or commit it to GitHub. `.env` is not loaded;
 [.env.example](.env.example) is a template only. Review the current
 [Google data-use terms](https://ai.google.dev/gemini-api/terms) before an
