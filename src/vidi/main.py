@@ -39,6 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--detections-fixture", type=Path, help="Explicit simulated detection data")
     parser.add_argument("--report", type=Path, help="Write local detection and timing results as JSON")
     parser.add_argument("--read-text", action="store_true", help="Read printed text once from the final raw frame (local OCR)")
+    parser.add_argument("--gemini-read", action="store_true", help="Send ONE final raw image to Gemini to transcribe printed text (cloud opt-in)")
     speech = parser.add_mutually_exclusive_group()
     speech.add_argument("--speak", action="store_true", help="Speak one requested reading or Gemini result")
     speech.add_argument("--speech-output", type=Path, help="Synthesize one requested reading or Gemini result to WAV without playback")
@@ -103,6 +104,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.detector not in (None, "gemini"):
                 raise ConfigurationError("The Gemini action conflicts with the explicitly selected local detector.")
             model_changes["object_detection_backend"] = "gemini"
+        if args.gemini_read:
+            model_changes["ocr_backend"] = "gemini"
         if args.model is not None:
             model_changes["object_detection_path"] = args.model.expanduser().resolve()
         if args.model_config is not None:
@@ -140,9 +143,10 @@ def main(argv: list[str] | None = None) -> int:
             speak=args.speak, speech_output=speech_output, gemini_detect=args.gemini_detect,
             continuous=args.continuous,
             gemini_live=args.gemini_live,
+            gemini_read=args.gemini_read,
         )
-        if args.prompt_key and not (args.gemini_detect or args.describe or args.gemini_live):
-            raise ConfigurationError("--prompt-key requires --gemini-detect, --gemini-live, or --describe.")
+        if args.prompt_key and not (args.gemini_detect or args.describe or args.gemini_live or args.gemini_read):
+            raise ConfigurationError("--prompt-key requires --gemini-detect, --gemini-live, --gemini-read, or --describe.")
 
         # Keep --help/--version available even if OpenCV has not been installed.
         from vidi.camera.capture import CaptureError
@@ -151,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
 
         key_context = (
             prompted_gemini_key() if args.prompt_key
-            else saved_gemini_key() if args.gemini_detect or args.describe or args.gemini_live
+            else saved_gemini_key() if args.gemini_detect or args.describe or args.gemini_live or args.gemini_read
             else nullcontext()
         )
         with key_context:
@@ -163,8 +167,9 @@ def main(argv: list[str] | None = None) -> int:
                     result = run_simulation(settings, gemini_detect=True, speak=args.speak, speech_output=speech_output)
                     if result.last_inference is None or result.last_inference.status != "ready" or result.speech.status == "failed":
                         return 1
-                elif args.read_text:
-                    result = run_simulation(settings, read_text=True, speak=args.speak, speech_output=speech_output)
+                elif args.read_text or args.gemini_read:
+                    reading_options = {"gemini_read": True} if args.gemini_read else {"read_text": True}
+                    result = run_simulation(settings, **reading_options, speak=args.speak, speech_output=speech_output)
                     if result.ocr.status == "failed" or result.speech.status == "failed":
                         return 1
                 elif args.describe:

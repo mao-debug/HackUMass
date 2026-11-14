@@ -105,6 +105,7 @@ def run_simulation(
     gemini_detect: bool = False,
     continuous: bool = False,
     gemini_live: bool = False,
+    gemini_read: bool = False,
 ) -> SimulationResult:
     """Run selected backends; cloud actions require an explicit per-run flag.
 
@@ -113,13 +114,13 @@ def run_simulation(
     """
     validate_runtime_settings(
         settings, describe=describe, read_text=read_text, speak=speak, speech_output=speech_output,
-        gemini_detect=gemini_detect, continuous=continuous, gemini_live=gemini_live,
+        gemini_detect=gemini_detect, continuous=continuous, gemini_live=gemini_live, gemini_read=gemini_read,
     )
     backend = settings.models.object_detection_backend or "none"
     preview = settings.simulation.preview
     capture_title = (
         "vidi snapshot (q/Esc finishes capture; Ctrl+C cancels)"
-        if gemini_detect or describe or read_text else WINDOW_TITLE
+        if gemini_detect or describe or read_text or gemini_read else WINDOW_TITLE
     )
     if preview and sys.platform.startswith("linux") and not (
         os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
@@ -391,15 +392,29 @@ def run_simulation(
         else:
             logger.error("Gemini detection unavailable: %s", inference.error or "No usable result.")
 
-    if read_text:
-        from vidi.ai.text_recognition import TesseractRecognizer
+    if read_text or gemini_read:
+        ocr_backend = "gemini" if gemini_read else "tesseract"
+        ocr_model = settings.cloud.model if gemini_read else None
+        if gemini_read:
+            from vidi.ai.gemini_text_recognition import GeminiTextRecognizer
+
+            recognizer = GeminiTextRecognizer(settings.cloud, settings.ocr)
+            result = replace(result, ocr=OcrResult(
+                status="pending", frame_id=last_packet.frame_id, backend=ocr_backend, model=ocr_model,
+            ))
+            persist(result)
+            logger.info("Gemini text reading requested; waiting for one response (request timeout %.1fs).", settings.ocr.timeout_s)
+        else:
+            from vidi.ai.text_recognition import TesseractRecognizer
+
+            recognizer = TesseractRecognizer(settings.ocr)
 
         ocr_started = time.monotonic()
         try:
-            ocr = TesseractRecognizer(settings.ocr).recognize(last_packet)
+            ocr = recognizer.recognize(last_packet)
         except KeyboardInterrupt:
             result = replace(result, ocr=OcrResult(
-                status="cancelled", frame_id=last_packet.frame_id, backend="tesseract",
+                status="cancelled", frame_id=last_packet.frame_id, backend=ocr_backend, model=ocr_model,
                 elapsed_s=time.monotonic() - ocr_started,
             ))
             persist_interruption(result)
@@ -414,7 +429,7 @@ def run_simulation(
         elif ocr.status == "no_text":
             print("No readable text found.", flush=True)
         else:
-            logger.error("Text reading failed: %s", ocr.error or "Local OCR unavailable.")
+            logger.error("Text reading failed: %s", ocr.error or "OCR unavailable.")
     requested_speech = speak or speech_output is not None
     if requested_speech:
         pending = SpeechResult(
@@ -450,8 +465,9 @@ def run_simulation(
     else:
         persist(result)
 
-    if read_text:
-        logger.info("Local text reading completed: OCR=%s, speech=%s.", result.ocr.status, result.speech.status)
+    if read_text or gemini_read:
+        logger.info("%s text reading completed: OCR=%s, speech=%s.",
+                    "Gemini" if gemini_read else "Local", result.ocr.status, result.speech.status)
     elif backend == "none":
         logger.info(
             "Simulation completed: %d frame(s), %dx%d, source=%s. %s",

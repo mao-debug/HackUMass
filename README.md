@@ -186,6 +186,29 @@ before adding packages; the source-tree command above remains available.
 
 ## Read text and optional speech
 
+Phase 3 also supports **Gemini printed-text reading** with your existing SDK
+and saved API key. Stop the live camera command with q/Esc first, then run:
+
+```sh
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-gemini-ocr.yaml --gemini-read --report artifacts/pi-gemini-reading.json
+```
+
+`--gemini-read` explicitly sends one final unannotated image to Google after
+the camera closes. It transcribes printed words and line breaks rather than
+describing the scene or answering instructions in the image. The profile
+requests one 1280×960 frame with bounded settling/autofocus, uploads a JPEG
+with at most a 1024-pixel longest edge, uses a 60-second OCR request timeout,
+and permits 2048 output tokens. Start with a short, clear printed sign; small
+print and long pages need controlled testing. There are no automatic retries
+or local OCR fallback. A model transcription can contain errors.
+
+Add `--speak` for one local spoken excerpt after the Bluetooth headphones are
+paired, selected as the Pi output, and the approved `espeak-ng` package is
+installed. `--speech-output FILE.wav` instead synthesizes a WAV without playing
+it. Gemini reading needs no Tesseract installation or additional Python package.
+Full text, model, status, and timing are saved before optional speech begins,
+so speech failure does not discard the reading. The offline option remains:
+
 `--read-text` runs local Tesseract once on the final **unannotated** frame,
 after camera resources close. It requires detector `none` and cannot be
 combined with a Gemini action. Add either `--speak` for one speech response or
@@ -218,9 +241,11 @@ available.” Empty OCR results use “No readable text found.” Full recognize
 text remains available in an explicitly requested JSON report. Speech status
 `completed` means the engine finished; it does not verify audibility.
 
-The Mac has native `say`, but Tesseract is not installed. Approval is pending
-for Homebrew Tesseract on Mac and the Pi OS packages `tesseract-ocr`,
-`tesseract-ocr-eng`, and `espeak-ng`. No Python OCR/TTS wrapper is needed.
+The Mac has native `say`, but Tesseract is not installed. Pi `espeak-ng` and its
+required dependencies are approved from the configured OS apt repositories;
+installation and audible playback are not yet verified. Approval is still
+pending for Homebrew Tesseract on Mac and Pi `tesseract-ocr`/
+`tesseract-ocr-eng`. No Python OCR/TTS wrapper is needed.
 After setup, a local-image Mac run uses the existing desktop environment:
 
 ```sh
@@ -254,7 +279,7 @@ description and accepts an optional `--question`. Choose one cloud action per
 run. Optional `--speak` or `--speech-output FILE.wav` uses local speech output
 for the resulting text; it does not call a Gemini speech-generation service.
 
-Both actions require an API key and the pinned Google SDK
+Gemini actions require an API key and the pinned Google SDK
 `google-genai==2.34.0`. Run `python -m vidi --save-key` once in the appropriate
 environment to enter the key privately and save it on that device. It takes
 no key argument, must be used by itself, and makes no network request. The key

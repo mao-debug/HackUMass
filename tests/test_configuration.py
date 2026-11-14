@@ -232,3 +232,9 @@ def test_live_profile_has_explicit_asynchronous_preview_and_safe_cloud_interval(
     assert settings.cloud.timeout_s == 60
     assert CloudSettings().timeout_s == 15
     assert load_settings(Path(__file__).resolve().parents[1] / "config/pi-gemini.yaml").cloud.timeout_s == 15
+
+
+@pytest.mark.parametrize("tokens", [255, 4097, True])
+def test_gemini_reading_output_budget_is_bounded(tokens):
+    with pytest.raises(ConfigurationError):
+        CloudSettings(ocr_max_output_tokens=tokens)

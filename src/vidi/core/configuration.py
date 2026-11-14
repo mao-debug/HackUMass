@@ -127,6 +127,7 @@ class CloudSettings:
     max_image_edge: int = 1024
     detection_max_output_tokens: int = 1024
     live_interval_s: float = 5.0
+    ocr_max_output_tokens: int = 2048
 
     def __post_init__(self) -> None:
         _optional_text("cloud.model", self.model)
@@ -139,6 +140,9 @@ class CloudSettings:
         _integer("cloud.max_output_tokens", self.max_output_tokens)
         _integer("cloud.max_image_edge", self.max_image_edge)
         _integer("cloud.detection_max_output_tokens", self.detection_max_output_tokens)
+        _integer("cloud.ocr_max_output_tokens", self.ocr_max_output_tokens)
+        if not 256 <= self.ocr_max_output_tokens <= 4096:
+            raise ConfigurationError("cloud.ocr_max_output_tokens must be between 256 and 4096.")
         if not 128 <= self.detection_max_output_tokens <= 2048:
             raise ConfigurationError("cloud.detection_max_output_tokens must be between 128 and 2048.")
         if self.max_image_edge > 1024:
@@ -149,7 +153,7 @@ class CloudSettings:
 
 @dataclass(frozen=True)
 class OcrSettings:
-    """Local printed-text recognition; configuration never enables a reading."""
+    """Printed-text recognition; configuration never enables reading or uploads."""
 
     language: str = "eng"
     psm: int = 6
@@ -278,9 +282,19 @@ def validate_runtime_settings(
     speak: bool = False, speech_output: Path | None = None, gemini_detect: bool = False,
     continuous: bool = False,
     gemini_live: bool = False,
+    gemini_read: bool = False,
 ) -> None:
     """Check backend combinations after command-line overrides are applied."""
     backend = settings.models.object_detection_backend or "none"
+    if gemini_read:
+        if read_text or describe or gemini_detect or gemini_live or continuous:
+            raise ConfigurationError("Choose --gemini-read by itself as the reading action; it cannot be combined with local reading or other cloud/live actions.")
+        if backend != "none":
+            raise ConfigurationError("Gemini reading requires --detector none or the pi-gemini-ocr profile.")
+        if settings.models.ocr_backend not in (None, "gemini"):
+            raise ConfigurationError("--gemini-read requires the gemini OCR backend.")
+        if settings.camera.source == "imx500":
+            raise ConfigurationError("Use --source picamera2 for a Raspberry Pi Gemini reading snapshot.")
     if gemini_live and not continuous:
         raise ConfigurationError("--gemini-live requires --continuous and authorizes repeated camera images to Google.")
     if continuous and (describe or read_text or gemini_detect or speak or speech_output is not None):
@@ -289,8 +303,8 @@ def validate_runtime_settings(
         raise ConfigurationError("The asynchronous live profile requires --continuous.")
     if settings.simulation.async_detection and backend not in ("none", "opencv_ssd", "fixture", "gemini"):
         raise ConfigurationError("Asynchronous live preview supports ordinary capture with local or Gemini detection.")
-    if (speak or speech_output is not None) and not (read_text or describe or gemini_detect):
-        raise ConfigurationError("Speech requires --read-text, --describe, or --gemini-detect.")
+    if (speak or speech_output is not None) and not (read_text or gemini_read or describe or gemini_detect):
+        raise ConfigurationError("Speech requires --read-text, --gemini-read, --describe, or --gemini-detect.")
     if speak and speech_output is not None:
         raise ConfigurationError("Choose either --speak or --speech-output, not both.")
     if read_text:
@@ -299,7 +313,7 @@ def validate_runtime_settings(
         if backend != "none":
             raise ConfigurationError("Reading mode requires --detector none or the pi-ocr profile.")
         if settings.models.ocr_backend not in (None, "tesseract"):
-            raise ConfigurationError("Reading mode supports the local tesseract OCR backend.")
+            raise ConfigurationError("--read-text supports local tesseract OCR; use --gemini-read to explicitly send an image to Gemini.")
     if backend == "gemini" and not (gemini_detect or gemini_live):
         raise ConfigurationError("Gemini detection requires --gemini-detect for one image or --continuous --gemini-live for repeated images.")
     if gemini_detect or gemini_live:
@@ -344,7 +358,7 @@ def validate_runtime_settings(
     report = settings.simulation.report_path
     if output is not None and report is not None and output.resolve() == report.resolve():
         raise ConfigurationError("The image output and JSON report must use different paths.")
-    if (read_text or gemini_detect or gemini_live or describe) and settings.camera.image_path is not None:
+    if (read_text or gemini_read or gemini_detect or gemini_live or describe) and settings.camera.image_path is not None:
         for other in (output, report):
             if other is not None and other.resolve() == settings.camera.image_path.resolve():
                 raise ConfigurationError("Exports must not overwrite the input image.")

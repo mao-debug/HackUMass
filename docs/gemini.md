@@ -1,7 +1,8 @@
 # vidi Gemini setup and live identification
 
 vidi's snapshot cloud actions are `--gemini-detect`, which produces object labels
-and boxes, while `--describe` produces a short scene description. Each sends
+and boxes; `--describe`, which produces a short scene description; and
+`--gemini-read`, which transcribes printed text for Phase 3. Each sends
 one final unannotated image only after the camera closes. Increasing
 `--max-frames` does not create additional uploads. No local detection weights,
 Tesseract, microphone, or Gemini speech-generation API is needed.
@@ -11,6 +12,23 @@ explicitly authorizes repeated selected images to Google. This repeated-frame
 use has been approved with a five-second minimum interval, one request at a
 time, stop on error/quit, a verified free-tier project, and no billing changes.
 No new package or local-model download is needed.
+
+For printed text, use the existing SDK and saved key:
+
+```sh
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-gemini-ocr.yaml --gemini-read --report artifacts/pi-gemini-reading.json
+```
+
+Stop any live camera run first. `--gemini-read` sends one raw snapshot after
+camera cleanup, returns text with model/timing metadata, and can be followed
+by explicit local `--speak` or `--speech-output FILE.wav`. It requires detector
+`none`, cannot be combined with other reading/cloud/live actions, and never
+silently falls back to Tesseract. The 60-second OCR timeout and 2048 output
+tokens are independent of the description/detection budgets. Full text is
+checkpointed before speech; missing audio hardware or engines cannot discard
+it. See [Phase 3 setup](phase3.md) for Bluetooth routing, approved eSpeak NG
+installation, offline reading, and bench checks. Gemini voice-command input
+is a separate Phase 5 task; this action does not record a microphone.
 
 The detection path is implemented and checked with offline tests. Approval covers
 the pinned Pi SDK and required dependencies from PyPI in `.venv-pi`, plus
@@ -124,7 +142,7 @@ into the repository. Run the same setup command again to replace the saved key;
 an interrupted or failed save preserves the previous key.
 
 After setup, omit `--prompt-key` from Gemini commands. vidi loads the saved key
-only for an explicitly requested `--gemini-detect`, `--describe`, or
+only for an explicitly requested `--gemini-detect`, `--gemini-read`, `--describe`, or
 `--continuous --gemini-live` action.
 Saving a key does not authorize automatic uploads or continuous requests.
 
@@ -216,7 +234,7 @@ On Mac, use a chosen non-sensitive local test image and the existing desktop
 `--gemini-detect` selects the `gemini` detector automatically. Merely setting
 `models.object_detection_backend: gemini`, or passing `--detector gemini`,
 does not authorize a request: the explicit flag is required. Choose one of
-`--gemini-detect`, `--describe`, or `--read-text` for a run.
+`--gemini-detect`, `--gemini-read`, `--describe`, or `--read-text` for a run.
 
 The Pi cloud profile requests a 1280×960 camera image at 5 FPS, one final frame,
 a one-second settling interval, and a supported single autofocus cycle with

@@ -44,7 +44,7 @@ class FramePacket:
 
 @dataclass(frozen=True)
 class OcrResult:
-    """One local OCR attempt; text is the engine's output, not a correction."""
+    """One transcription attempt; cloud text is a model prediction to verify."""
 
     status: str = "not_requested"
     frame_id: int | None = None
@@ -52,6 +52,7 @@ class OcrResult:
     backend: str | None = None
     elapsed_s: float = 0.0
     error: str | None = None
+    model: str | None = None
 
 
 @dataclass(frozen=True)
