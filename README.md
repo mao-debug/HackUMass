@@ -4,8 +4,8 @@ vidi is a HackUMass smart glasses prototype for blind and visually impaired
 users. The connected Pi 4 camera reports **IMX708 (Camera Module 3)**. Phase 2
 uses Picamera2 capture and local OpenCV DNN CPU detection with MobileNet-SSD.
 The separate IMX500 AI Camera backend remains optional for that different
-sensor. macOS supports fixture replay, and an explicit one-shot Gemini text
-description is available for the demonstration. Phase 3 adds opt-in local OCR
+sensor. macOS supports fixture replay. Explicit one-shot Gemini object detection
+and scene descriptions are optional cloud demonstrations. Phase 3 adds local OCR
 and a short speech response or WAV export. Voice commands remain deferred.
 Pi OCR and audio acceptance are pending; the audio output device is unverified.
 
@@ -70,17 +70,20 @@ the corresponding settings.
 
 `--source` selects `sample`, `image`, `webcam`, `picamera2`, or `imx500`; `--image PATH`
 selects image input and `--camera-index N` selects webcam input unless a source
-is explicit. `--detector` selects `none`, `fixture`, `opencv_ssd`, or `imx500`.
+is explicit. `--detector` selects `none`, `fixture`, `opencv_ssd`, `imx500`, or
+`gemini`; the cloud backend also requires the explicit `--gemini-detect` flag.
 `--detections-fixture PATH` supplies replay data. CPU detection uses `--model`
 for the MobileNet-SSD `.caffemodel` and `--model-config` for `deploy.prototxt`.
 It supports the model's 20 VOC object classes, including people, chairs, and
 some vehicles; doors and signs are not supported classes. The optional IMX500
 decoder instead accepts its specific baseline `.rpk` and model-aligned
 `--labels`. Other networks require matching decoders. Use
-`--threshold` for the confidence filter and `--max-detections` to limit results.
+`--threshold` for local-model confidence filtering and `--max-detections` to
+limit results. Gemini labels have no SSD class ID or comparable confidence score.
 
 `--max-frames` sets a positive frame limit. `--preview`/`--no-preview` control
-the desktop window; **q**, **Escape**, and **Ctrl+C** stop a run. `--output PATH`
+the desktop window. **q** or **Escape** finishes capture; requested reading/cloud
+actions then process the final frame. **Ctrl+C** cancels the run. `--output PATH`
 saves the final frame, with overlays when detection is enabled, while
 `--report PATH` writes a JSON result.
 Both are explicit local exports. Generated files belong in ignored
@@ -142,9 +145,11 @@ before adding packages; the source-tree command above remains available.
 
 `--read-text` runs local Tesseract once on the final **unannotated** frame,
 after camera resources close. It requires detector `none` and cannot be
-combined with `--describe`. Add either `--speak` for one speech response or
-`--speech-output FILE.wav` for a local WAV export. Both require `--read-text`
-and cannot be combined. YAML settings alone enable none of these actions.
+combined with a Gemini action. Add either `--speak` for one speech response or
+`--speech-output FILE.wav` for a local WAV export. In this OCR workflow, pair
+the output action with `--read-text`; speech is also available for the Gemini
+actions below. Playback and WAV export cannot be combined. YAML settings alone
+enable none of these actions.
 
 The Pi OCR profile requests one 1280×960 frame, a one-second settling interval,
 and a supported single autofocus cycle with a four-second wait limit. Camera
@@ -186,31 +191,49 @@ Package approval, setup, failure handling, and controlled bench checks are
 documented in [docs/phase3.md](docs/phase3.md). The later 100-frame detection
 and broader chair tests are separate checks and need not block trying OCR.
 
-## Optional Gemini demonstration
+## Optional Gemini detection and descriptions
 
-`--describe` explicitly opts into one cloud request for that run. After camera
-resources close, the application sends the final **unannotated** frame and an
-optional `--question` to Gemini. The cloud text is identified separately from
-local detections; it is not spoken. `--question` is accepted only with
-`--describe`. No stream or continuous upload is enabled by YAML settings.
+`--gemini-detect` explicitly requests one cloud object-detection result and
+selects the `gemini` backend. `config/pi-gemini.yaml` prepares one 1280×960
+Picamera2 snapshot; no local weights or Tesseract are needed. Selecting the
+backend in YAML alone fails until the upload flag is supplied. After the
+camera closes, only the final **unannotated** frame is sent, even when the
+capture run requests multiple frames. This is not a per-frame cloud loop.
 
-The optional `gemini` dependency extra and `GEMINI_API_KEY` are required. The
-application does not load `.env` files; [.env.example](.env.example) is only a
-template. Keep keys in an untracked environment and never in source, logs, or
-reports. The configured model is `gemini-3.5-flash-lite`, with a 15-second
-request timeout, at most 256 output tokens, and an image resized to at most
-1024 pixels on its longest edge.
+Gemini returns generated labels and validated boxes, converted to original
+image pixels. Its `class_id` and `confidence` are `null`; local SSD confidence
+thresholds do not apply. Broader label vocabulary does not guarantee correct
+or complete coverage. Explicit `--threshold`, `--model`, and `--model-config`
+options are rejected for Gemini rather than silently ignored. The separate
+`--describe` action returns a short scene
+description and accepts an optional `--question`. Choose one cloud action per
+run. Optional `--speak` or `--speech-output FILE.wav` uses local speech output
+for the resulting text; it does not call a Gemini speech-generation service.
 
-The Google SDK download was approved and version 2.34.0 is installed in the
-local Mac environment. SDK compatibility was tested with a local mocked HTTP
-transport and blocked sockets; no live Gemini request was made. API-project
-setup and live image uploads remain separate approval steps. The budget is **$0 new
-spending**: verify a free-tier API project with billing disabled and support for
-the chosen model before any live call; skip the cloud demo if that cannot be
-established. Student Google AI Pro benefits do not establish API credits;
-verify any credit offer separately. Review the provider's current data-use
-terms and use a non-sensitive demonstration image with permission. Network or
-cloud failure must leave the local detection result available.
+Both actions require `GEMINI_API_KEY` and the pinned Google SDK
+`google-genai==2.34.0`. The configured model is `gemini-3.5-flash-lite`, with a
+15-second request timeout and a maximum 1024-pixel image edge. Output limits
+are 1024 tokens for object detection and 256 for descriptions; the default
+object limit is 10. No automatic retries or local-backend fallback are used.
+With `--output` and `--report`, an API failure preserves the local image and
+records the cloud result as unavailable. `config/pi.yaml` remains the separate
+offline CPU detection path.
+
+The SDK is approved and installed on the Mac; its existing compatibility
+checks used mocked transport, not a live Gemini request. Approval now also
+covers the pinned Pi SDK and required dependencies from PyPI in `.venv-pi`,
+plus user-triggered non-sensitive test snapshots through a verified free-tier
+project. Pi SDK installation, local key setup, and a live request have not yet
+been performed. Keep the budget at **$0 new spending**: verify the intended
+project's free tier, billing-disabled state, and model access before a test.
+No billing changes, subscription credits, or student credits are assumed.
+
+[docs/gemini.md](docs/gemini.md) explains AI Studio key creation, hidden Bash
+entry, the approved Pi SDK setup, and the one-shot test commands.
+Never paste a key into chat or commit it to GitHub. `.env` is not loaded;
+[.env.example](.env.example) is a template only. Review the current
+[Google data-use terms](https://ai.google.dev/gemini-api/terms) before an
+approved non-sensitive image upload.
 
 ## Configuration, tests, and diagnostics
 
@@ -218,6 +241,7 @@ cloud failure must leave the local detection result available.
 [config/fixtures.yaml](config/fixtures.yaml) selects replay, and
 [config/pi.yaml](config/pi.yaml) selects IMX708/Picamera2 with CPU detection;
 [config/pi-ocr.yaml](config/pi-ocr.yaml) selects the camera-only OCR snapshot,
+[config/pi-gemini.yaml](config/pi-gemini.yaml) selects the opt-in cloud snapshot,
 and [config/pi-imx500.yaml](config/pi-imx500.yaml) is the optional AI Camera profile.
 The `camera`,
 `simulation`, `detection`, `models`, `ocr`, `speech`, and `cloud` sections configure their
@@ -270,7 +294,7 @@ scaffolding. `config/`, `examples/`, `scripts/`, `tests/`, and `docs/` hold
 configuration, fixtures, diagnostics, verification, and setup notes.
 
 Phase 1 established the foundation. Phase 2 covers camera/detection plus the
-explicit one-shot Gemini text demonstration. Phase 3 adds requested local
+explicit one-shot Gemini demonstrations described above. Phase 3 adds requested local
 OCR and speech; its installation and hardware acceptance remain pending.
 Voice commands and wearable deployment/optimization remain later work.
 Model class coverage is limited to the selected model's labels; an empty

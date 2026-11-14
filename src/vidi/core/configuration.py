@@ -122,6 +122,7 @@ class CloudSettings:
     timeout_s: float = 15.0
     max_output_tokens: int = 256
     max_image_edge: int = 1024
+    detection_max_output_tokens: int = 1024
 
     def __post_init__(self) -> None:
         _optional_text("cloud.model", self.model)
@@ -130,6 +131,9 @@ class CloudSettings:
         _positive_number("cloud.timeout_s", self.timeout_s)
         _integer("cloud.max_output_tokens", self.max_output_tokens)
         _integer("cloud.max_image_edge", self.max_image_edge)
+        _integer("cloud.detection_max_output_tokens", self.detection_max_output_tokens)
+        if not 128 <= self.detection_max_output_tokens <= 2048:
+            raise ConfigurationError("cloud.detection_max_output_tokens must be between 128 and 2048.")
         if self.max_image_edge > 1024:
             raise ConfigurationError("cloud.max_image_edge cannot exceed the demo limit of 1024.")
         if self.max_output_tokens > 1024:
@@ -264,21 +268,34 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
 
 def validate_runtime_settings(
     settings: AppSettings, *, describe: bool = False, read_text: bool = False,
-    speak: bool = False, speech_output: Path | None = None,
+    speak: bool = False, speech_output: Path | None = None, gemini_detect: bool = False,
 ) -> None:
     """Check backend combinations after command-line overrides are applied."""
     backend = settings.models.object_detection_backend or "none"
-    if (speak or speech_output is not None) and not read_text:
-        raise ConfigurationError("--speak and --speech-output require --read-text.")
+    if (speak or speech_output is not None) and not (read_text or describe or gemini_detect):
+        raise ConfigurationError("Speech requires --read-text, --describe, or --gemini-detect.")
     if speak and speech_output is not None:
         raise ConfigurationError("Choose either --speak or --speech-output, not both.")
     if read_text:
-        if describe:
-            raise ConfigurationError("--read-text cannot be combined with --describe.")
+        if describe or gemini_detect:
+            raise ConfigurationError("--read-text cannot be combined with a Gemini action.")
         if backend != "none":
             raise ConfigurationError("Reading mode requires --detector none or the pi-ocr profile.")
         if settings.models.ocr_backend not in (None, "tesseract"):
             raise ConfigurationError("Reading mode supports the local tesseract OCR backend.")
+    if backend == "gemini" and not gemini_detect:
+        raise ConfigurationError("Gemini detection requires --gemini-detect (one-image upload opt-in).")
+    if gemini_detect:
+        if backend != "gemini":
+            raise ConfigurationError("--gemini-detect requires the gemini detector.")
+        if describe:
+            raise ConfigurationError("Choose --gemini-detect or --describe for one Gemini request, not both.")
+        if settings.camera.source == "imx500":
+            raise ConfigurationError("Use --source picamera2 for a Raspberry Pi Gemini snapshot.")
+        if settings.detection.max_detections > 20:
+            raise ConfigurationError("Gemini snapshots support at most 20 objects per request.")
+        if settings.detection.labels_path is not None or settings.detection.fixture_path is not None:
+            raise ConfigurationError("Gemini uses its returned labels; remove local labels and fixture paths.")
     if speak or speech_output is not None:
         if settings.models.text_to_speech_backend not in (None, "espeak_ng", "say"):
             raise ConfigurationError("Speech backend must be espeak_ng or say.")
@@ -287,8 +304,8 @@ def validate_runtime_settings(
                 raise ConfigurationError("--speech-output requires a local .wav path.")
             if settings.models.text_to_speech_backend == "say":
                 raise ConfigurationError("WAV export requires the espeak_ng backend; say supports playback only.")
-    if backend not in ("none", "imx500", "opencv_ssd", "fixture"):
-        raise ConfigurationError("Object detector must be none, imx500, opencv_ssd, or fixture.")
+    if backend not in ("none", "imx500", "opencv_ssd", "fixture", "gemini"):
+        raise ConfigurationError("Object detector must be none, imx500, opencv_ssd, fixture, or gemini.")
     if backend == "opencv_ssd":
         if settings.camera.source == "imx500":
             raise ConfigurationError("Use --source picamera2 for CPU detection on a Raspberry Pi camera.")
@@ -310,10 +327,10 @@ def validate_runtime_settings(
     report = settings.simulation.report_path
     if output is not None and report is not None and output.resolve() == report.resolve():
         raise ConfigurationError("The image output and JSON report must use different paths.")
-    if read_text and settings.camera.image_path is not None:
+    if (read_text or gemini_detect or describe) and settings.camera.image_path is not None:
         for other in (output, report):
             if other is not None and other.resolve() == settings.camera.image_path.resolve():
-                raise ConfigurationError("Reading exports must not overwrite the input image.")
+                raise ConfigurationError("Exports must not overwrite the input image.")
     if speech_output is not None:
         for other in (output, report, settings.camera.image_path):
             if other is not None and speech_output.resolve() == other.resolve():

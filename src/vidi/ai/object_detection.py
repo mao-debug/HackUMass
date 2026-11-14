@@ -1,7 +1,8 @@
-"""Validated local detections and explicitly simulated fixture playback.
+"""Local confidence filtering, fixture playback, and explicit snapshot overlays.
 
 Fixtures replay annotations; they never recognize objects. The hardware SSD
-decoder lives with its IMX500 request adapter.
+decoder lives with its IMX500 request adapter. Cloud snapshot objects have no
+local taxonomy or calibrated confidence and bypass local confidence filtering.
 """
 
 from __future__ import annotations
@@ -45,10 +46,11 @@ def load_labels(path: Path) -> tuple[str, ...]:
 def filter_detections(
     detections: Iterable[Detection], settings: DetectionSettings
 ) -> tuple[Detection, ...]:
-    """Apply confidence, supported-label filtering, and a deterministic limit."""
+    """Filter scored local predictions without inventing scores for snapshots."""
     valid = (
         item for item in detections
-        if supported_label(item.label) and item.confidence >= settings.confidence_threshold
+        if _number(item.confidence) and 0 <= item.confidence <= 1
+        and item.confidence >= settings.confidence_threshold and supported_label(item.label)
     )
     return tuple(sorted(valid, key=lambda item: -item.confidence)[:settings.max_detections])
 
@@ -118,19 +120,32 @@ class FixtureDetector:
 
 
 def render_detections(image: np.ndarray, result: DetectionResult) -> np.ndarray:
-    """Annotate a copy and visibly identify every fixture result as simulated."""
+    """Annotate a copy with the backend/outcome and no invented confidence."""
     annotated = image.copy()
-    for item in result.detections:
+    cloud_snapshot = result.backend == "gemini"
+    detections = () if cloud_snapshot and result.status != "ready" else result.detections
+    for item in detections:
         x0, y0, x1, y1 = item.bbox_xyxy
         cv2.rectangle(annotated, (x0, y0), (x1 - 1, y1 - 1), (60, 220, 80), 2)
+        label = item.label
+        if not cloud_snapshot and item.confidence is not None:
+            label = f"{label} {item.confidence:.2f}"
         cv2.putText(
-            annotated, f"{item.label} {item.confidence:.2f}", (x0, max(12, y0 - 5)),
+            annotated, label, (x0, max(12, y0 - 5)),
             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (60, 220, 80), 1, cv2.LINE_AA,
         )
     if result.simulated:
         message = "SIMULATED DETECTIONS"
+    elif cloud_snapshot:
+        outcome = {
+            "ready": "", "unavailable": " UNAVAILABLE", "failed": " FAILED",
+            "cancelled": " CANCELLED", "not_ready": " NOT READY",
+        }.get(result.status, " UNAVAILABLE")
+        message = f"GEMINI SNAPSHOT{outcome} - PROTOTYPE"
     elif result.status == "not_ready":
         message = "INFERENCE NOT READY"
+    elif result.status in ("unavailable", "failed", "cancelled"):
+        message = f"OBJECT DETECTION {result.status.upper()} - PROTOTYPE"
     else:
         message = "OBJECT DETECTION - PROTOTYPE"
     cv2.rectangle(annotated, (0, 0), (annotated.shape[1], 30), (25, 25, 25), -1)

@@ -193,6 +193,10 @@ References: [AI Camera documentation](https://www.raspberrypi.com/documentation/
 
 ## Optional Gemini demonstration and approval boundaries
 
+This section records the original Phase 2 approval state. User-triggered
+Gemini test snapshots and the Pi SDK download were approved during the later
+Gemini integration; use [gemini.md](gemini.md) for the current setup and scope.
+
 The approved Google SDK 2.34.0 was installed/tested locally on Mac using mocked
 HTTP and blocked sockets. No live Gemini API request or image upload has been
 approved or performed. API-project setup, current tier/terms review, and live

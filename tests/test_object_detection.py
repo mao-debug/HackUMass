@@ -7,9 +7,9 @@ import cv2
 import numpy as np
 import pytest
 
-from vidi.ai.object_detection import DetectionError, FixtureDetector, load_labels, render_detections
+from vidi.ai.object_detection import DetectionError, FixtureDetector, filter_detections, load_labels, render_detections
 from vidi.core.configuration import DetectionSettings
-from vidi.core.types import FramePacket
+from vidi.core.types import Detection, DetectionResult, FramePacket
 
 
 def fixture_document():
@@ -129,3 +129,96 @@ def test_overlay_returns_copy_and_always_marks_fixture_simulated(monkeypatch, tm
     assert not np.any(packet.image_bgr)
     assert np.any(annotated)
     assert any(call.args[1] == "SIMULATED DETECTIONS" for call in put_text.call_args_list)
+
+
+def test_local_filter_excludes_unscored_objects_without_assigning_confidence():
+    cloud_object = Detection(None, "door", None, (1, 2, 30, 40))
+    local_object = Detection(15, "person", 0.9, (10, 12, 40, 55))
+    result = filter_detections((cloud_object, local_object), DetectionSettings())
+    assert result == (local_object,)
+    assert cloud_object.confidence is None and cloud_object.class_id is None
+
+
+@pytest.mark.parametrize("score", [None, float("nan"), float("inf"), -float("inf"), -0.1, 1.1, True, "0.9", 10**500])
+def test_local_filter_excludes_invalid_scores(score):
+    detection = Detection(15, "person", score, (1, 2, 30, 40))
+    assert filter_detections((detection,), DetectionSettings(confidence_threshold=0)) == ()
+
+
+def test_local_filter_preserves_threshold_order_limit_and_tie_stability():
+    detections = (
+        Detection(1, "chair", 0.55, (1, 2, 30, 40)),
+        Detection(2, "person", 0.95, (1, 2, 30, 40)),
+        Detection(3, "bicycle", 0.95, (1, 2, 30, 40)),
+        Detection(4, "car", 0.54, (1, 2, 30, 40)),
+        Detection(5, "unknown", 1.0, (1, 2, 30, 40)),
+    )
+    result = filter_detections(detections, DetectionSettings(max_detections=3))
+    assert [item.label for item in result] == ["person", "bicycle", "chair"]
+
+
+def test_cloud_overlay_uses_unscored_label_current_xyxy_and_owned_copy(monkeypatch):
+    image = np.full((60, 80, 3), 15, dtype=np.uint8)
+    original = image.copy()
+    result = DetectionResult(
+        7, "gemini", "ready", (Detection(None, "door", None, (10, 12, 40, 55)),),
+    )
+    put_text = Mock(wraps=cv2.putText)
+    rectangle = Mock(wraps=cv2.rectangle)
+    monkeypatch.setattr(cv2, "putText", put_text)
+    monkeypatch.setattr(cv2, "rectangle", rectangle)
+
+    annotated = render_detections(image, result)
+
+    np.testing.assert_array_equal(image, original)
+    assert not np.shares_memory(annotated, image)
+    assert np.any(annotated != original)
+    assert rectangle.call_args_list[0].args[1:3] == ((10, 12), (39, 54))
+    assert [call.args[1] for call in put_text.call_args_list] == ["door", "GEMINI SNAPSHOT - PROTOTYPE"]
+    assert result.detections[0].confidence is None and result.detections[0].class_id is None
+
+
+def test_cloud_overlay_never_formats_a_score_as_calibrated_confidence(monkeypatch):
+    result = DetectionResult(7, "gemini", "ready", (Detection(None, "chair", 0.9, (1, 2, 30, 40)),))
+    put_text = Mock(wraps=cv2.putText)
+    monkeypatch.setattr(cv2, "putText", put_text)
+    render_detections(make_packet().image_bgr, result)
+    assert put_text.call_args_list[0].args[1] == "chair"
+
+
+@pytest.mark.parametrize("status, outcome", [
+    ("unavailable", "UNAVAILABLE"), ("failed", "FAILED"),
+    ("cancelled", "CANCELLED"), ("not_ready", "NOT READY"),
+])
+def test_cloud_failure_overlay_is_explicit_and_never_shows_stale_boxes(monkeypatch, status, outcome):
+    result = DetectionResult(7, "gemini", status, (Detection(None, "stale chair", None, (10, 12, 40, 55)),))
+    put_text = Mock(wraps=cv2.putText)
+    rectangle = Mock(wraps=cv2.rectangle)
+    monkeypatch.setattr(cv2, "putText", put_text)
+    monkeypatch.setattr(cv2, "rectangle", rectangle)
+
+    render_detections(make_packet().image_bgr, result)
+
+    assert [call.args[1] for call in put_text.call_args_list] == [f"GEMINI SNAPSHOT {outcome} - PROTOTYPE"]
+    assert rectangle.call_count == 1  # Banner only, no stale bounding boxes.
+
+
+def test_empty_ready_cloud_overlay_keeps_snapshot_identity(monkeypatch):
+    put_text = Mock(wraps=cv2.putText)
+    monkeypatch.setattr(cv2, "putText", put_text)
+    render_detections(make_packet().image_bgr, DetectionResult(7, "gemini", "ready"))
+    assert put_text.call_args_list[0].args[1] == "GEMINI SNAPSHOT - PROTOTYPE"
+
+
+@pytest.mark.parametrize("status, expected", [
+    ("ready", "OBJECT DETECTION - PROTOTYPE"), ("not_ready", "INFERENCE NOT READY"),
+])
+def test_existing_local_banners_and_numeric_confidence_are_preserved(monkeypatch, status, expected):
+    detections = (Detection(15, "person", 0.95, (10, 12, 40, 55)),) if status == "ready" else ()
+    put_text = Mock(wraps=cv2.putText)
+    monkeypatch.setattr(cv2, "putText", put_text)
+    render_detections(make_packet().image_bgr, DetectionResult(7, "opencv_ssd", status, detections))
+    texts = [call.args[1] for call in put_text.call_args_list]
+    assert texts[-1] == expected
+    if detections:
+        assert texts[0] == "person 0.95"

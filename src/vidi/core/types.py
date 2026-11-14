@@ -10,11 +10,11 @@ import numpy as np
 
 @dataclass(frozen=True)
 class Detection:
-    """A model class and confidence with an output-image pixel box (xyxy)."""
+    """An image-space box; open-vocabulary cloud labels have no class ID/score."""
 
-    class_id: int
+    class_id: int | None
     label: str
-    confidence: float
+    confidence: float | None
     bbox_xyxy: tuple[int, int, int, int]
 
 
@@ -27,6 +27,9 @@ class DetectionResult:
     status: str
     detections: tuple[Detection, ...] = ()
     simulated: bool = False
+    model: str | None = None
+    elapsed_s: float | None = None
+    error: str | None = None
 
 
 @dataclass(frozen=True)

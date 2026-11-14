@@ -22,8 +22,11 @@ and live speech have not been verified.** Phase 3 package approvals are pending.
 | `--report PATH.json` | Save full recognized text and separate OCR/speech results |
 | `--output PATH.png` | Save the final local image for checking framing and readability |
 
-`--speak` and `--speech-output` require `--read-text` and are mutually exclusive.
-Reading mode requires detector `none` and cannot be combined with `--describe`.
+For this OCR workflow, pair `--speak` or `--speech-output` with `--read-text`.
+The same output actions can accompany one `--gemini-detect` or `--describe`
+request; see [gemini.md](gemini.md). Playback and WAV export are mutually
+exclusive. Reading mode requires detector `none` and cannot be combined with
+either Gemini action.
 Configuration and installed engines alone never start OCR or speech. The
 default sample run and existing detection commands retain their behavior.
 One CLI invocation is the initial trigger; voice activation remains Phase 5
@@ -170,7 +173,7 @@ Speech has its own result. **Speech status `completed` means the engine
 finished, not that anyone heard the audio.** A WAV file is not a playback test.
 Reports add `ocr` and `speech` sections to the existing JSON fields. OCR statuses
 are `not_requested`, `ready`, `no_text`, `failed`, or `cancelled`. Speech statuses
-are `not_requested`, `pending`, `skipped_ocr_failed`, `completed`, `failed`, or
+are `not_requested`, `pending`, `skipped_ocr_failed`, `skipped_cloud_failed`, `completed`, `failed`, or
 `cancelled`. The complete OCR text is checkpointed before printing or starting
 speech; report updates replace the previous JSON atomically. A speech failure
 returns exit status 1 while preserving recognized text. Ctrl+C returns 130 and

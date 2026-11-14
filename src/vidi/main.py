@@ -14,7 +14,7 @@ from vidi.core.configuration import ConfigurationError, load_settings, validate_
 def build_parser() -> argparse.ArgumentParser:
     """Describe local backends and the per-run cloud opt-in."""
     parser = argparse.ArgumentParser(
-        description="vidi Phase 3: local camera detection, printed-text reading, and optional speech."
+        description="vidi Phase 3: camera detection, Gemini snapshots, printed-text reading, and optional speech."
     )
     parser.add_argument("--version", action="version", version=f"vidi {__version__}")
     parser.add_argument("--config", type=Path, help="YAML path; omitted means built-in defaults")
@@ -25,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--preview", action=argparse.BooleanOptionalAction, default=None,
                         help="Open a local preview window; requires a desktop display")
     parser.add_argument("--output", type=Path, help="Save the last frame to a local image path")
-    parser.add_argument("--detector", choices=("none", "imx500", "opencv_ssd", "fixture"), help="Explicit detector selection")
+    parser.add_argument("--detector", choices=("none", "imx500", "opencv_ssd", "fixture", "gemini"), help="Explicit detector selection")
     parser.add_argument("--model", type=Path, help="Local IMX500 RPK or MobileNet-SSD Caffe weights; no automatic download")
     parser.add_argument("--model-config", type=Path, help="Local MobileNet-SSD deploy.prototxt for opencv_ssd")
     parser.add_argument("--labels", type=Path, help="Model-aligned label file, preserving class ID gaps")
@@ -35,8 +35,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--report", type=Path, help="Write local detection and timing results as JSON")
     parser.add_argument("--read-text", action="store_true", help="Read printed text once from the final raw frame (local OCR)")
     speech = parser.add_mutually_exclusive_group()
-    speech.add_argument("--speak", action="store_true", help="Speak the OCR excerpt once; requires --read-text")
-    speech.add_argument("--speech-output", type=Path, help="Synthesize the OCR excerpt to WAV without playback; requires --read-text")
+    speech.add_argument("--speak", action="store_true", help="Speak one requested reading or Gemini result")
+    speech.add_argument("--speech-output", type=Path, help="Synthesize one requested reading or Gemini result to WAV without playback")
+    parser.add_argument("--gemini-detect", action="store_true", help="Send ONE final raw image to Gemini for object labels and boxes (cloud opt-in)")
     parser.add_argument("--describe", action="store_true", help="Send ONE last unannotated image to Gemini (cloud opt-in)")
     parser.add_argument("--question", help="Optional typed question for --describe; does not enable voice input")
     parser.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"))
@@ -73,6 +74,10 @@ def main(argv: list[str] | None = None) -> int:
         model_changes = {}
         if args.detector is not None:
             model_changes["object_detection_backend"] = args.detector
+        if args.gemini_detect:
+            if args.detector not in (None, "gemini"):
+                raise ConfigurationError("--gemini-detect conflicts with the explicitly selected local detector.")
+            model_changes["object_detection_backend"] = "gemini"
         if args.model is not None:
             model_changes["object_detection_path"] = args.model.expanduser().resolve()
         if args.model_config is not None:
@@ -98,11 +103,16 @@ def main(argv: list[str] | None = None) -> int:
             detection=replace(settings.detection, **detection_changes),
             log_level=args.log_level or settings.log_level,
         )
+        if settings.models.object_detection_backend == "gemini":
+            if args.threshold is not None:
+                raise ConfigurationError("--threshold applies to scored local detectors; Gemini returns no confidence scores.")
+            if args.model is not None or args.model_config is not None:
+                raise ConfigurationError("Gemini uses cloud.model; --model and --model-config select local model files.")
         logging.basicConfig(level=settings.log_level, format="%(levelname)s: %(message)s")
         speech_output = args.speech_output.expanduser().resolve() if args.speech_output is not None else None
         validate_runtime_settings(
             settings, describe=args.describe, read_text=args.read_text,
-            speak=args.speak, speech_output=speech_output,
+            speak=args.speak, speech_output=speech_output, gemini_detect=args.gemini_detect,
         )
 
         # Keep --help/--version available even if OpenCV has not been installed.
@@ -111,13 +121,20 @@ def main(argv: list[str] | None = None) -> int:
         from vidi.core.controller import SimulationError, run_simulation
 
         try:
-            if args.read_text:
+            if args.gemini_detect:
+                result = run_simulation(settings, gemini_detect=True, speak=args.speak, speech_output=speech_output)
+                if result.last_inference is None or result.last_inference.status != "ready" or result.speech.status == "failed":
+                    return 1
+            elif args.read_text:
                 result = run_simulation(settings, read_text=True, speak=args.speak, speech_output=speech_output)
                 if result.ocr.status == "failed" or result.speech.status == "failed":
                     return 1
             elif args.describe:
-                result = run_simulation(settings, describe=True, question=args.question or "What is in front of me?")
-                if result.description_status != "ready":
+                options = {"describe": True, "question": args.question or "What is in front of me?"}
+                if args.speak or speech_output is not None:
+                    options.update(speak=args.speak, speech_output=speech_output)
+                result = run_simulation(settings, **options)
+                if result.description_status != "ready" or result.speech.status == "failed":
                     return 1
             else:
                 result = run_simulation(settings)
