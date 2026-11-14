@@ -8,6 +8,7 @@ import pytest
 from vidi.core.configuration import (
     AppSettings,
     CameraSettings,
+    CloudSettings,
     ConfigurationError,
     ModelSettings,
     SimulationSettings,
@@ -214,3 +215,17 @@ def test_yaml_python_objects_are_not_constructed(tmp_path):
 
     with pytest.raises(ConfigurationError):
         load_settings(path)
+
+
+@pytest.mark.parametrize("interval", [0, 1, 4.99, float("inf"), float("nan"), True])
+def test_live_cloud_interval_cannot_exceed_approved_request_frequency(interval):
+    with pytest.raises(ConfigurationError):
+        CloudSettings(live_interval_s=interval)
+
+
+def test_live_profile_has_explicit_asynchronous_preview_and_safe_cloud_interval():
+    settings = load_settings(Path(__file__).resolve().parents[1] / "config/pi-live.yaml")
+    assert settings.camera.fps == 30
+    assert settings.simulation.async_detection is True
+    assert settings.models.object_detection_backend == "gemini"
+    assert settings.cloud.live_interval_s >= 5

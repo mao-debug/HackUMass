@@ -1,24 +1,67 @@
-# vidi one-shot Gemini setup
+# vidi Gemini setup and live identification
 
-vidi has two explicit cloud actions: `--gemini-detect` produces object labels
+vidi's snapshot cloud actions are `--gemini-detect`, which produces object labels
 and boxes, while `--describe` produces a short scene description. Each sends
 one final unannotated image only after the camera closes. Increasing
 `--max-frames` does not create additional uploads. No local detection weights,
 Tesseract, microphone, or Gemini speech-generation API is needed.
 
-For a continuously updating camera view with local identification, use
-`--config config/pi.yaml --continuous --preview` with the installed local
-MobileNet-SSD model. Gemini currently remains a one-snapshot action and cannot
-be combined with `--continuous`. A repeating cloud mode would send repeated
-images to Google and requires separate approval. See the continuous local
-command in [README.md](../README.md).
+The separate `--continuous --gemini-live` action keeps the camera open and
+explicitly authorizes repeated selected images to Google. This repeated-frame
+use has been approved with a five-second minimum interval, one request at a
+time, stop on error/quit, a verified free-tier project, and no billing changes.
+No new package or local-model download is needed.
 
 The detection path is implemented and checked with offline tests. Approval covers
 the pinned Pi SDK and required dependencies from PyPI in `.venv-pi`, plus
 user-triggered non-sensitive test snapshots through a verified free-tier
 project, with no billing changes. The Mac SDK is already installed and its
 existing checks used mocked transport. The user reports a successful live Pi
-Gemini run; controlled recognition-quality and latency checks remain pending.
+Gemini snapshot run; controlled live-mode recognition-quality and latency checks
+remain pending.
+
+## Responsive live preview with repeated identification
+
+After pulling the update, use your existing `.venv-pi` and saved key:
+
+```sh
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-live.yaml --continuous --gemini-live --preview --report artifacts/pi-live-gemini.json
+```
+
+This profile requests a 640×480 camera feed at 30 FPS; this is a request, not a
+measured Pi throughput claim. The old `config/pi.yaml` deliberately requests
+2 FPS and runs the temporary 20-class local detector. Changing to live Gemini
+addresses its limited vocabulary; it does not establish prediction accuracy.
+
+The left pane stays on the current raw camera image. The right pane shows the
+exact image analyzed by Gemini, with its labels, boxes, frame ID, and current
+age. No old boxes are placed on a newer live image. Capture and preview do not
+wait for inference. One pending image can be replaced by a newer one; older
+frames never build up in a queue.
+
+Gemini waits `cloud.live_interval_s` (default and minimum five seconds) after
+one detection completes before starting another. There are no overlapping
+requests or automatic retries. Any unavailable/failed result stops further
+uploads; the live camera remains active and shows the failure state. Fix the
+cause and restart the command to resume. No automatic fallback to the old
+local detector occurs. The saved key and YAML never opt in by themselves:
+`--gemini-live` and `--continuous` must both be present.
+
+Press q/Esc or Ctrl+C to stop new submissions. An in-flight request may finish;
+the wait for the worker is bounded and no queued frame is sent afterward.
+This does not record a video file or generate continuous speech. If `--output`
+is supplied, it saves the last analyzed image with boxes associated with that
+same frame. Live reports use schema version 2 and distinguish
+`last_preview_frame_id`, `last_analyzed_frame_id`, and `output_frame_id`.
+`frames` retains the latest 120 received analysis results, while capture and
+analysis totals span the whole run. The schema-1 snapshot reports below are
+unchanged.
+
+To compare camera speed without inference or uploads:
+
+```sh
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-live.yaml --continuous --detector none --preview
+```
 
 ## Prepare an API key without sending an image
 
@@ -72,7 +115,8 @@ into the repository. Run the same setup command again to replace the saved key;
 an interrupted or failed save preserves the previous key.
 
 After setup, omit `--prompt-key` from Gemini commands. vidi loads the saved key
-only for an explicitly requested `--gemini-detect` or `--describe` action.
+only for an explicitly requested `--gemini-detect`, `--describe`, or
+`--continuous --gemini-live` action.
 Saving a key does not authorize automatic uploads or continuous requests.
 
 Credential priority is `--prompt-key` for a temporary override, then an existing
@@ -83,7 +127,7 @@ is overriding the saved one, run `unset GEMINI_API_KEY` in that terminal.
 
 ## Optional: enter a key for one run only
 
-Use `--prompt-key` with `--gemini-detect` or `--describe`. The flag takes **no
+Use `--prompt-key` with a Gemini snapshot or live action. The flag takes **no
 key argument**. Run the command in an interactive terminal, such as the Pi's
 Terminal application or VS Code's terminal, rather than a non-interactive
 output panel or pipe.
@@ -97,7 +141,7 @@ the prompted key to disk or shell history.
 
 If the terminal cannot provide hidden input, vidi refuses the prompt rather
 than falling back to visible entry. `--prompt-key` is accepted only for the
-two explicit Gemini actions; it is not used for local OCR or offline detection.
+explicit Gemini actions; it is not used for local OCR or offline detection.
 Never paste the key into chat, screenshots, GitHub, YAML, logs, or reports.
 
 Without `--prompt-key`, vidi uses the exported or saved key described above.

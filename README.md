@@ -71,7 +71,8 @@ the corresponding settings.
 `--source` selects `sample`, `image`, `webcam`, `picamera2`, or `imx500`; `--image PATH`
 selects image input and `--camera-index N` selects webcam input unless a source
 is explicit. `--detector` selects `none`, `fixture`, `opencv_ssd`, `imx500`, or
-`gemini`; the cloud backend also requires the explicit `--gemini-detect` flag.
+`gemini`; the cloud backend also requires `--gemini-detect` for a snapshot or
+`--continuous --gemini-live` for repeated images.
 `--detections-fixture PATH` supplies replay data. CPU detection uses `--model`
 for the MobileNet-SSD `.caffemodel` and `--model-config` for `deploy.prototxt`.
 It supports the model's 20 VOC object classes, including people, chairs, and
@@ -93,28 +94,38 @@ Both are explicit local exports. Generated files belong in ignored
 `artifacts/`; use `.png` for an image export. `--log-level DEBUG` enables more
 logging. A fixture report is explicitly marked simulated.
 
-For a continuous **offline** view on the Pi's connected desktop, use the
-already downloaded MobileNet-SSD model and the existing Pi environment:
+For a responsive continuous camera view with the approved repeated Gemini
+identification, use the existing Pi environment and saved key:
 
 ```sh
-PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi.yaml --continuous --preview --output artifacts/pi-live-last.png --report artifacts/pi-live-local.json
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-live.yaml --continuous --gemini-live --preview --report artifacts/pi-live-gemini.json
 ```
 
-The camera stays open and boxes update on each processed frame. Press **q** or
-**Esc** in the preview to finish, or **Ctrl+C** in the terminal. Final image and
-report exports are written after stopping, including a normal Ctrl+C stop.
-Use `--no-preview` when no desktop display is available. This is a live feed;
-it does not write a video file. Continuous reports retain the latest 120 frame
-records plus totals for the full run, so history does not grow indefinitely.
-The existing Pi profile requests a 2 FPS processing limit; actual throughput
-depends on the Pi and model.
-This command uses MobileNet-SSD's 20 VOC classes, including people, chairs, and
-some vehicles; it does not detect doors or signs. It uses the local model rather
-than Gemini's broader generated labels.
+The left pane shows the current camera feed; the right shows the last analyzed
+image, its boxes, frame ID, and age. Delayed boxes are never drawn onto a newer
+frame. The profile requests 640×480 at **30 FPS**, while Gemini runs in one
+background worker. Actual preview speed must be measured on the Pi.
+`cloud.live_interval_s` is at least five seconds **after a response completes**;
+there is no overlapping request or accumulated frame queue. A failed request
+stops uploads and leaves the camera preview running. Restart the command to
+try again. `--gemini-live` explicitly authorizes repeated images to Google;
+the YAML profile or saved key alone cannot enable uploads. This mode uses the
+existing approved free-tier project and makes no billing changes.
 
-Continuous mode currently supports local capture/detection. Gemini, OCR, and
-speech remain separate explicit snapshot actions. The live view makes no
-network requests and does not read a saved Gemini key.
+Press **q** or **Esc** in the preview, or **Ctrl+C** in the terminal, to stop.
+No further frames are submitted; an already active request may finish. Final
+exports, if requested, are written after stopping. An optional `--output`
+image is the last analyzed frame with its matching boxes. The JSON report
+distinguishes camera frames from received analyses and retains only the latest
+120 analysis records plus full-run totals. This is a live feed, not a saved
+video file. OCR and speech remain separate explicit snapshot actions.
+
+For a camera-only speed comparison, use the same fast profile with
+`--detector none --continuous --preview` and omit `--gemini-live`; it makes no
+uploads or key-file reads. The original `config/pi.yaml` remains the reproducible
+2 FPS local MobileNet-SSD baseline. That temporary model supports only 20 VOC
+classes and can mislabel unsupported objects such as windows and computer
+mice. It is not used by the Gemini live command above.
 
 ## Raspberry Pi setup and acceptance
 
@@ -219,6 +230,7 @@ and broader chair tests are separate checks and need not block trying OCR.
 
 ## Optional Gemini detection and descriptions
 
+`--continuous --gemini-live` selects the asynchronous live workflow above.
 `--gemini-detect` explicitly requests one cloud object-detection result and
 selects the `gemini` backend. `config/pi-gemini.yaml` prepares one 1280×960
 Picamera2 snapshot; no local weights or Tesseract are needed. Selecting the

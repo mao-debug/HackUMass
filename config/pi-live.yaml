@@ -1,0 +1,22 @@
+# Fast camera preview with separately sampled Gemini identification.
+# Requires --continuous --gemini-live; YAML/key alone never authorizes uploads.
+camera:
+  source: picamera2
+  width: 640
+  height: 480
+  fps: 30.0
+  startup_timeout_s: 30.0
+  capture_timeout_s: 5.0
+simulation:
+  preview: true
+  async_detection: true
+models:
+  object_detection_backend: gemini
+detection:
+  max_detections: 10
+cloud:
+  model: gemini-3.5-flash-lite
+  timeout_s: 15.0
+  max_image_edge: 1024
+  detection_max_output_tokens: 1024
+  live_interval_s: 5.0

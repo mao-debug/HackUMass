@@ -234,3 +234,35 @@ def test_continuous_rejects_snapshot_actions_before_camera_or_credentials(monkey
 
     assert main(["--continuous"] + arguments) == 1
     run.assert_not_called()
+
+
+def test_live_gemini_uses_key_only_with_explicit_upload_flag(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "OFFLINE-FAKE-KEY")
+    run = Mock(return_value=SimpleNamespace(interrupted=False, last_inference=SimpleNamespace(status="ready")))
+    monkeypatch.setattr(controller, "run_simulation", run)
+
+    assert main(["--continuous", "--gemini-live"]) == 0
+    settings = run.call_args.args[0]
+    assert settings.models.object_detection_backend == "gemini"
+    assert run.call_args.kwargs == {"continuous": True, "gemini_live": True}
+
+
+@pytest.mark.parametrize("arguments", [
+    [], ["--read-text"], ["--describe"], ["--gemini-detect"], ["--speak"],
+])
+def test_invalid_live_gemini_options_fail_before_key_or_camera(monkeypatch, arguments):
+    run = Mock()
+    monkeypatch.setattr(controller, "run_simulation", run)
+    monkeypatch.setattr("vidi.main.saved_gemini_key", lambda: pytest.fail("Saved key accessed"))
+    prefix = [] if not arguments else ["--continuous"]
+    assert main(["--gemini-live"] + prefix + arguments) == 1
+    run.assert_not_called()
+
+
+def test_live_profile_without_upload_flag_never_reads_key_or_opens_camera(monkeypatch):
+    run = Mock()
+    monkeypatch.setattr(controller, "run_simulation", run)
+    monkeypatch.setattr("vidi.main.saved_gemini_key", lambda: pytest.fail("Saved key accessed"))
+    profile = Path(__file__).resolve().parents[1] / "config/pi-live.yaml"
+    assert main(["--config", str(profile), "--continuous"]) == 1
+    run.assert_not_called()

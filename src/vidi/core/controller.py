@@ -104,6 +104,7 @@ def run_simulation(
     read_text: bool = False, speak: bool = False, speech_output: Path | None = None,
     gemini_detect: bool = False,
     continuous: bool = False,
+    gemini_live: bool = False,
 ) -> SimulationResult:
     """Run selected backends; cloud actions require an explicit per-run flag.
 
@@ -112,7 +113,7 @@ def run_simulation(
     """
     validate_runtime_settings(
         settings, describe=describe, read_text=read_text, speak=speak, speech_output=speech_output,
-        gemini_detect=gemini_detect, continuous=continuous,
+        gemini_detect=gemini_detect, continuous=continuous, gemini_live=gemini_live,
     )
     backend = settings.models.object_detection_backend or "none"
     preview = settings.simulation.preview
@@ -134,6 +135,15 @@ def run_simulation(
         from vidi.ai.cpu_detection import OpenCvSsdDetector
 
         detector = OpenCvSsdDetector(settings.models, settings.detection)
+
+    if continuous and (settings.simulation.async_detection or gemini_live):
+        from vidi.core.live import run_live_detection
+
+        if gemini_live:
+            from vidi.ai.gemini_detection import GeminiObjectDetector
+
+            detector = GeminiObjectDetector(settings.cloud, settings.detection)
+        return run_live_detection(settings, detector, open_source=_open_source, gemini_live=gemini_live)
 
     count = ready = not_ready = 0
     last_packet = last_detection = None

@@ -26,7 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--image", type=Path, help="Image path (selects image unless --source is given)")
     parser.add_argument("--camera-index", type=int, help="Webcam index (selects webcam unless --source is given)")
     parser.add_argument("--max-frames", type=int, help="Positive frame limit (default: 1)")
-    parser.add_argument("--continuous", action="store_true", help="Keep local camera capture and detection running until q/Esc or Ctrl+C")
+    parser.add_argument("--continuous", action="store_true", help="Keep the camera running until q/Esc or Ctrl+C; Gemini also requires --gemini-live")
     parser.add_argument("--preview", action=argparse.BooleanOptionalAction, default=None,
                         help="Open a local preview window; requires a desktop display")
     parser.add_argument("--output", type=Path, help="Save the last frame to a local image path")
@@ -43,6 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     speech.add_argument("--speak", action="store_true", help="Speak one requested reading or Gemini result")
     speech.add_argument("--speech-output", type=Path, help="Synthesize one requested reading or Gemini result to WAV without playback")
     parser.add_argument("--gemini-detect", action="store_true", help="Send ONE final raw image to Gemini for object labels and boxes (cloud opt-in)")
+    parser.add_argument("--gemini-live", action="store_true", help="With --continuous, repeatedly send frames to Gemini, no faster than once per 5 seconds; stop uploads on error")
     parser.add_argument("--prompt-key", action="store_true", help="Enter the Gemini key privately for this run; accepts no key argument")
     parser.add_argument("--save-key", action="store_true", help="Privately enter and save a Gemini key locally, then exit; accepts no key argument")
     parser.add_argument("--describe", action="store_true", help="Send ONE last unannotated image to Gemini (cloud opt-in)")
@@ -98,9 +99,9 @@ def main(argv: list[str] | None = None) -> int:
         model_changes = {}
         if args.detector is not None:
             model_changes["object_detection_backend"] = args.detector
-        if args.gemini_detect:
+        if args.gemini_detect or args.gemini_live:
             if args.detector not in (None, "gemini"):
-                raise ConfigurationError("--gemini-detect conflicts with the explicitly selected local detector.")
+                raise ConfigurationError("The Gemini action conflicts with the explicitly selected local detector.")
             model_changes["object_detection_backend"] = "gemini"
         if args.model is not None:
             model_changes["object_detection_path"] = args.model.expanduser().resolve()
@@ -138,9 +139,10 @@ def main(argv: list[str] | None = None) -> int:
             settings, describe=args.describe, read_text=args.read_text,
             speak=args.speak, speech_output=speech_output, gemini_detect=args.gemini_detect,
             continuous=args.continuous,
+            gemini_live=args.gemini_live,
         )
-        if args.prompt_key and not (args.gemini_detect or args.describe):
-            raise ConfigurationError("--prompt-key requires --gemini-detect or --describe.")
+        if args.prompt_key and not (args.gemini_detect or args.describe or args.gemini_live):
+            raise ConfigurationError("--prompt-key requires --gemini-detect, --gemini-live, or --describe.")
 
         # Keep --help/--version available even if OpenCV has not been installed.
         from vidi.camera.capture import CaptureError
@@ -149,12 +151,15 @@ def main(argv: list[str] | None = None) -> int:
 
         key_context = (
             prompted_gemini_key() if args.prompt_key
-            else saved_gemini_key() if args.gemini_detect or args.describe
+            else saved_gemini_key() if args.gemini_detect or args.describe or args.gemini_live
             else nullcontext()
         )
         with key_context:
             try:
-                if args.gemini_detect:
+                if args.gemini_live:
+                    result = run_simulation(settings, continuous=True, gemini_live=True)
+                    return 130 if result.interrupted else (1 if result.last_inference is not None and result.last_inference.status != "ready" else 0)
+                elif args.gemini_detect:
                     result = run_simulation(settings, gemini_detect=True, speak=args.speak, speech_output=speech_output)
                     if result.last_inference is None or result.last_inference.status != "ready" or result.speech.status == "failed":
                         return 1
