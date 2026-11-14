@@ -31,19 +31,46 @@ def _caption(image, text: str, *, bottom: bool = False) -> None:
                 min(0.5, max(0.15, width / 1200)), (245, 245, 245), 1, cv2.LINE_AA)
 
 
-def render_live_preview(packet: FramePacket, analyzed, *, paused: bool = False, detection_enabled: bool = True):
+def _notice(image, lines: tuple[str, ...]) -> None:
+    """Make request outcomes visible without implying a successful detection."""
+    height, width = image.shape[:2]
+    spacing = min(30, max(12, height // 8))
+    top = max(30, (height - spacing * len(lines)) // 2)
+    cv2.rectangle(image, (0, top - 5), (width, min(height, top + spacing * len(lines))), (25, 25, 25), -1)
+    for index, text in enumerate(lines):
+        cv2.putText(image, text, (10, top + spacing * index + spacing - 6), cv2.FONT_HERSHEY_SIMPLEX,
+                    min(0.55, max(0.15, width / 1100)), (245, 245, 245), 1, cv2.LINE_AA)
+
+
+def render_live_preview(packet: FramePacket, analyzed, *, paused: bool = False, detection_enabled: bool = True,
+                        request_timeout_s: float | None = None):
     """Never attach an older prediction to the current live-camera image."""
     live = packet.image_bgr.copy()
     _caption(live, f"LIVE CAMERA - frame {packet.frame_id}")
     if analyzed is None:
         analysis = np.zeros_like(live)
         _caption(analysis, "WAITING FOR ANALYSIS" if detection_enabled else "DETECTOR OFF")
+        if detection_enabled:
+            lines = (
+                ("Gemini request pending", f"Request timeout: {request_timeout_s:g}s", "Live camera continues")
+                if request_timeout_s is not None else ("Waiting for detection results",)
+            )
+            _notice(analysis, lines)
     else:
         old_packet, inference = analyzed
         analysis = render_detections(old_packet.image_bgr, inference)
         age = max(0.0, (time.monotonic_ns() - old_packet.captured_monotonic_ns) / 1e9)
         status = " - UPLOADS PAUSED" if paused else ""
-        _caption(analysis, f"ANALYZED frame {old_packet.frame_id} - {age:.1f}s old{status}", bottom=True)
+        if inference.status != "ready":
+            message = (
+                "Gemini request timed out" if "timed out" in (inference.error or "").lower()
+                else "Detection unavailable"
+            )
+            _notice(analysis, (message, "No detection result received", "Uploads paused" if paused else "See terminal for details"))
+        elif not inference.detections:
+            _notice(analysis, ("No objects identified", "in this analyzed frame"))
+        action = "ANALYZED" if inference.status == "ready" else "ATTEMPTED"
+        _caption(analysis, f"{action} frame {old_packet.frame_id} - {age:.1f}s old{status}", bottom=True)
         if analysis.shape != live.shape:
             analysis = cv2.resize(analysis, (live.shape[1], live.shape[0]))
     return cv2.hconcat((live, analysis))
@@ -66,6 +93,7 @@ def run_live_detection(settings: AppSettings, detector, *, open_source, gemini_l
     count = ready = not_ready = completed = 0
     last_packet = analyzed = None
     first_frame_ns = first_ready_ns = last_ready_ns = None
+    last_successful_frame_id = None
     records = deque(maxlen=CONTINUOUS_RECORD_LIMIT)
     interrupted = paused = False
     started = processing_started = processing_ended = time.monotonic()
@@ -101,6 +129,7 @@ def run_live_detection(settings: AppSettings, detector, *, open_source, gemini_l
                                 ready += inference.status == "ready"
                                 not_ready += inference.status != "ready"
                                 if inference.status == "ready":
+                                    last_successful_frame_id = old_packet.frame_id
                                     received_ns = time.monotonic_ns()
                                     if first_ready_ns is None:
                                         first_ready_ns = received_ns
@@ -110,7 +139,7 @@ def run_live_detection(settings: AppSettings, detector, *, open_source, gemini_l
                                 elif gemini_live:
                                     paused = True
                                     logger.error("Gemini uploads stopped: %s. The camera continues; restart the command to try again.",
-                                                 inference.error or "No usable result.")
+                                                 (inference.error or "No usable result").rstrip(". "))
                                 if settings.simulation.report_path is not None:
                                     records.append({
                                         "frame_id": old_packet.frame_id,
@@ -121,7 +150,10 @@ def run_live_detection(settings: AppSettings, detector, *, open_source, gemini_l
                             if not worker.stopped:
                                 worker.submit(packet)
                         if preview:
-                            cv2.imshow(WINDOW_TITLE, render_live_preview(packet, analyzed, paused=paused, detection_enabled=detector is not None))
+                            cv2.imshow(WINDOW_TITLE, render_live_preview(
+                                packet, analyzed, paused=paused, detection_enabled=detector is not None,
+                                request_timeout_s=settings.cloud.timeout_s if gemini_live else None,
+                            ))
                             if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
                                 break
                         time.sleep(max(0.0, 1.0 / settings.camera.fps - (time.monotonic() - frame_started)))
@@ -171,7 +203,8 @@ def run_live_detection(settings: AppSettings, detector, *, open_source, gemini_l
             "source": settings.camera.source, "output_path": str(output) if output is not None else None,
             "report_path": str(result.report_path), "output_frame_id": export_packet.frame_id if output is not None else None,
             "last_preview_frame_id": last_packet.frame_id,
-            "last_analyzed_frame_id": inference.frame_id if inference is not None else None,
+            "last_analyzed_frame_id": last_successful_frame_id,
+            "last_result_frame_id": inference.frame_id if inference is not None else None,
             "last_inference_status": inference.status if inference is not None else "not_received",
             "capture_fps": observed_fps,
             "inference_ready_fps": _observed_rate(ready, first_ready_ns, last_ready_ns),
@@ -180,6 +213,7 @@ def run_live_detection(settings: AppSettings, detector, *, open_source, gemini_l
             "frame_records_truncated": completed > len(records), "frame_records_dropped": completed - len(records),
             "cloud_uploads_paused": paused,
             "cloud_min_interval_s": settings.cloud.live_interval_s if gemini_live else None,
+            "cloud_timeout_s": settings.cloud.timeout_s if gemini_live else None,
         })
         try:
             _save_report(result.report_path, report)
@@ -187,6 +221,6 @@ def run_live_detection(settings: AppSettings, detector, *, open_source, gemini_l
             if not interrupted:
                 raise
             logger.error("%s", exc)
-    logger.info("Live capture finished: %d camera frames, %d received analyses; measured capture rate=%s FPS.",
-                count, completed, f"{observed_fps:.2f}" if observed_fps is not None else "not measured")
+    logger.info("Live capture finished: %d camera frames, %d successful analyses, %d unavailable results; measured capture rate=%s FPS.",
+                count, ready, not_ready, f"{observed_fps:.2f}" if observed_fps is not None else "not measured")
     return result

@@ -28,14 +28,18 @@ After pulling the update, use your existing `.venv-pi` and saved key:
 PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-live.yaml --continuous --gemini-live --preview --report artifacts/pi-live-gemini.json
 ```
 
-This profile requests a 640×480 camera feed at 30 FPS; this is a request, not a
-measured Pi throughput claim. The old `config/pi.yaml` deliberately requests
+This profile requests a 640×480 camera feed at 30 FPS. The supplied live Pi run
+measured 11.21 FPS; the requested rate is not guaranteed. That run's only Gemini
+request timed out, so recognition was unavailable rather than successfully empty.
+The old `config/pi.yaml` deliberately requests
 2 FPS and runs the temporary 20-class local detector. Changing to live Gemini
 addresses its limited vocabulary; it does not establish prediction accuracy.
 
 The left pane stays on the current raw camera image. The right pane shows the
-exact image analyzed by Gemini, with its labels, boxes, frame ID, and current
-age. No old boxes are placed on a newer live image. Capture and preview do not
+selected image and explicit pending, unavailable, or successful-result state.
+Successful results show labels, boxes, frame ID, and current age. "No objects
+identified" is used only for a successful empty response. No old boxes are
+placed on a newer live image. Capture and preview do not
 wait for inference. One pending image can be replaced by a newer one; older
 frames never build up in a queue.
 
@@ -44,7 +48,10 @@ one detection completes before starting another. There are no overlapping
 requests or automatic retries. Any unavailable/failed result stops further
 uploads; the live camera remains active and shows the failure state. Fix the
 cause and restart the command to resume. No automatic fallback to the old
-local detector occurs. The saved key and YAML never opt in by themselves:
+local detector occurs. Live requests now use a **60-second request timeout**
+instead of 15 seconds; snapshot profiles keep 15 seconds. This gives a slow
+response more time without blocking the camera, but does not guarantee success.
+The saved key and YAML never opt in by themselves:
 `--gemini-live` and `--continuous` must both be present.
 
 Press q/Esc or Ctrl+C to stop new submissions. An in-flight request may finish;
@@ -52,7 +59,9 @@ the wait for the worker is bounded and no queued frame is sent afterward.
 This does not record a video file or generate continuous speech. If `--output`
 is supplied, it saves the last analyzed image with boxes associated with that
 same frame. Live reports use schema version 2 and distinguish
-`last_preview_frame_id`, `last_analyzed_frame_id`, and `output_frame_id`.
+`last_preview_frame_id`, `last_result_frame_id`, `last_analyzed_frame_id`,
+and `output_frame_id`. An unavailable request does not count as a successful
+analysis; `cloud_timeout_s` records the timeout used for the run.
 `frames` retains the latest 120 received analysis results, while capture and
 analysis totals span the whole run. The schema-1 snapshot reports below are
 unchanged.

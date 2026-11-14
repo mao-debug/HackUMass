@@ -11,7 +11,9 @@ import logging
 import math
 import multiprocessing
 from multiprocessing import shared_memory
+import signal
 import sys
+import threading
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -54,6 +56,12 @@ def run_worker(connection, shared_name: str, frame_bytes: int, session_factory, 
     session = None
     memory = None
     try:
+        # The parent handles Ctrl+C and closes this worker over its protocol.
+        # Ignore terminal SIGINT before opening resources, while leaving SIGTERM
+        # available for bounded termination. Direct/in-thread callers keep their
+        # signal policy (signal.signal is only legal in the main thread).
+        if multiprocessing.parent_process() is not None and threading.current_thread() is threading.main_thread():
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
         memory = shared_memory.SharedMemory(name=shared_name)
         session = session_factory(*session_arguments)
         connection.send(("ready", 0))
@@ -79,22 +87,24 @@ def run_worker(connection, shared_name: str, frame_bytes: int, session_factory, 
             # A small control message follows all bulk writes. No frame or large
             # pickle is read from a pipe after its poll deadline has elapsed.
             connection.send(("frame", len(encoded)))
-    except (EOFError, BrokenPipeError):
+    except (EOFError, BrokenPipeError, KeyboardInterrupt):
         pass
     except Exception as exc:
         kind = "detection_error" if isinstance(exc, DetectionError) else "capture_error"
         try:
             connection.send((kind, str(exc)[:1024]))
-        except (EOFError, BrokenPipeError, OSError):
+        except (EOFError, BrokenPipeError, OSError, KeyboardInterrupt):
             pass
     finally:
-        try:
-            if session is not None:
-                session.close()
-        finally:
-            if memory is not None:
-                memory.close()
-            connection.close()
+        for name, resource in (("camera session", session), ("shared memory", memory), ("connection", connection)):
+            if resource is None:
+                continue
+            try:
+                resource.close()
+            except KeyboardInterrupt:
+                pass  # Also tolerate injected/late interrupts while cleaning up.
+            except Exception as exc:
+                logger.warning("Camera worker could not close %s: %s", name, exc)
 
 
 class ManagedPiCapture:

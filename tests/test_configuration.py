@@ -229,3 +229,6 @@ def test_live_profile_has_explicit_asynchronous_preview_and_safe_cloud_interval(
     assert settings.simulation.async_detection is True
     assert settings.models.object_detection_backend == "gemini"
     assert settings.cloud.live_interval_s >= 5
+    assert settings.cloud.timeout_s == 60
+    assert CloudSettings().timeout_s == 15
+    assert load_settings(Path(__file__).resolve().parents[1] / "config/pi-gemini.yaml").cloud.timeout_s == 15

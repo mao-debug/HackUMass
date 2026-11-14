@@ -136,7 +136,7 @@ def test_live_pixels_advance_while_analysis_is_pending_and_export_matches_analyz
     result = live.run_live_detection(settings, object(), open_source=open_source, gemini_live=True)
 
     assert [int(image[60, 100, 0]) for image in shown] == [30, 60, 90, 120]
-    assert [int(image[60, 260, 0]) for image in shown] == [0, 0, 30, 30]
+    assert [int(image[85, 260, 0]) for image in shown] == [0, 0, 30, 30]
     assert capture.read_packet.call_count == 4 and worker.submissions == [1, 2, 3, 4]
     assert result.frames_processed == 4 and result.ready_frames == 1
     assert result.last_inference.frame_id == 1 and worker.closed
@@ -197,8 +197,10 @@ def test_gemini_unavailable_stops_submissions_but_capture_and_failure_artifacts_
     manager.__exit__.assert_called_once()
     report = json.loads(result.report_path.read_text())
     assert report["cloud_uploads_paused"] is True
+    assert report["cloud_timeout_s"] == 60
     assert report["inference_results_received"] == 1
-    assert report["output_frame_id"] == report["last_analyzed_frame_id"] == 1
+    assert report["output_frame_id"] == report["last_result_frame_id"] == 1
+    assert report["last_analyzed_frame_id"] is None
     assert report["last_preview_frame_id"] == 4
     assert report["last_inference_status"] == "unavailable"
     assert report["last_inference"]["error"] == "Quota unavailable"
@@ -243,3 +245,28 @@ def test_live_profile_needs_explicit_cloud_opt_in_before_worker_or_camera(monkey
 
     worker_factory.assert_not_called()
     open_source.assert_not_called()
+
+
+@pytest.mark.parametrize("status, expected, forbidden", [
+    ("pending", "Gemini request pending", "No objects identified"),
+    ("unavailable", "Gemini request timed out", "No objects identified"),
+    ("ready", "No objects identified", "No detection result received"),
+])
+def test_request_states_distinguish_timeout_and_pending_from_successful_empty_result(monkeypatch, status, expected, forbidden):
+    current, selected = packet(8), packet(7)
+    text = Mock(wraps=cv2.putText)
+    monkeypatch.setattr(cv2, "putText", text)
+    attempted = None if status == "pending" else (
+        selected, DetectionResult(7, "gemini", status, error="Gemini timed out." if status == "unavailable" else None),
+    )
+
+    live.render_live_preview(current, attempted, paused=status == "unavailable", request_timeout_s=60)
+
+    captions = [call.args[1] for call in text.call_args_list]
+    assert expected in captions and forbidden not in captions
+    if status == "pending":
+        assert "Request timeout: 60s" in captions
+    elif status == "unavailable":
+        assert "No detection result received" in captions
+        assert any(caption.startswith("ATTEMPTED frame 7") for caption in captions)
+        assert not any(caption.startswith("ANALYZED") for caption in captions)

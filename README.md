@@ -101,14 +101,20 @@ identification, use the existing Pi environment and saved key:
 PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-live.yaml --continuous --gemini-live --preview --report artifacts/pi-live-gemini.json
 ```
 
-The left pane shows the current camera feed; the right shows the last analyzed
-image, its boxes, frame ID, and age. Delayed boxes are never drawn onto a newer
+The left pane shows the current camera feed; the right shows the selected
+image and request state, with boxes, frame ID, and age after a successful result.
+Delayed boxes are never drawn onto a newer
 frame. The profile requests 640×480 at **30 FPS**, while Gemini runs in one
-background worker. Actual preview speed must be measured on the Pi.
+background worker. The supplied Pi run measured **11.21 FPS**; the requested
+rate is not a throughput guarantee. Live Gemini uses a **60-second request
+timeout**; snapshot requests keep their existing 15-second timeout.
 `cloud.live_interval_s` is at least five seconds **after a response completes**;
 there is no overlapping request or accumulated frame queue. A failed request
 stops uploads and leaves the camera preview running. Restart the command to
-try again. `--gemini-live` explicitly authorizes repeated images to Google;
+try again. A pending request or timeout is shown explicitly; "No objects
+identified" appears only after a successful empty response. A longer timeout
+allows more response time and does not guarantee detection. `--gemini-live`
+explicitly authorizes repeated images to Google;
 the YAML profile or saved key alone cannot enable uploads. This mode uses the
 existing approved free-tier project and makes no billing changes.
 

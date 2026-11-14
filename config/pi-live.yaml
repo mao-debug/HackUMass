@@ -16,7 +16,7 @@ detection:
   max_detections: 10
 cloud:
   model: gemini-3.5-flash-lite
-  timeout_s: 15.0
+  timeout_s: 60.0
   max_image_edge: 1024
   detection_max_output_tokens: 1024
   live_interval_s: 5.0
