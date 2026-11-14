@@ -1,0 +1,27 @@
+# Portable sample pixels + simulated proximity. D alone opts in to one Gemini image.
+camera:
+  source: sample
+  width: 640
+  height: 480
+  fps: 30.0
+simulation:
+  max_frames: 1
+  preview: false
+models:
+  object_detection_backend: none
+  scene_description_backend: gemini
+cloud:
+  model: gemini-3.5-flash-lite
+  timeout_s: 60.0
+  max_output_tokens: 256
+  live_interval_s: 5.0
+speech:
+  max_words: 60
+  timeout_s: 45.0
+proximity:
+  backend: fixture
+  fixture_path: ../examples/proximity-fixture.json
+  poll_hz: 5.0
+  response_timeout_s: 0.4
+  stale_after_s: 0.5
+  nearby_mm: 1000

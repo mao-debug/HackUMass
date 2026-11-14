@@ -17,6 +17,8 @@ equipment has passed an integration test.
 | Pi 5 bench power/cooling | Suitable USB-C supply/cable and cooling | To verify | Record supply profile, fan/heatsink, temperatures, warnings, and throttle flags before sustained work |
 | Voice input | Microphone | To source or verify | Deferred from Phase 2; interface, quality, and placement unverified |
 | Speech output | Bluetooth headphones | Pi 5 test word and Gemini OCR read-aloud passed by user confirmation | User heard `espeak-ng vidi` and the subsequent printed-text reading; optional neural voice remains pending |
+| Proximity controller | ESP32 USB board | Board/USB connection and pin labels visible in supplied photos | Exact board model, firmware upload, serial protocol-v1 handshake, and combined Pi operation to verify |
+| Proximity channels | Two HC-SR04 ultrasonic sensors | Planned left/right inputs; physical acceptance pending | Left TRIG/ECHO 25/34, right 26/35; photos do not verify divider resistance, actual echo voltage, target accuracy, or power quality |
 | Wearable mounting | Glasses frame and camera accessories | To verify | Fit, attachment, field of view, and cable strain relief to check |
 | Activation input | Optional pushbutton | Optional; unverified | Wiring and software integration deferred |
 
@@ -65,6 +67,11 @@ require specific approval. The CPU model and Pi Google SDK were approved, and
 explicit Gemini snapshot/live image uploads are approved under the existing
 free-tier, no-billing-change scope. A saved key never activates uploads alone.
 Pi eSpeak NG installation is approved; optional Piper downloads remain pending.
+Phase 4 pyserial 3.5 and Arduino-ESP32 core 3.3.12/compiler downloads are approved;
+pyserial is installed on Mac, and a local real ESP32 cross-compile passed.
+Pi package setup, board upload, and physical acceptance remain separate.
+Follow [phase4.md](phase4.md) and the
+[firmware instructions](../esp32code/README.md) before opening the USB port.
 If the existing OS is
 incompatible, stop and propose a supported image on a separately approved spare
 microSD card rather than overwriting the current installation.
@@ -140,6 +147,12 @@ OpenCV/NumPy processing, and preview path.
 | Gemini live warnings/completion | Repeated libpng iCCP warnings remained nonfatal; run completed normally with the final capture summary |
 | Gemini OCR and local speech | HTTP 200, `OCR=ready`, `speech=completed`; user confirmed hearing the spoken excerpt; report saved to `artifacts/pi5-gemini-speaking.json` |
 | OCR transcription observations | MLH Hack Days flyer text was returned, with partial lines near the bottom; complete transcription accuracy was not checked against the source |
+| Phase 4 ESP32/USB evidence | Photos show board/connection and pin labels; resistor measurements, echo voltage, firmware upload/handshake, and acoustic testing not recorded |
+| Phase 4 native software verification | Six local tests passed, compiling the actual sketch with temporary SDK stubs; these do not certify actual ISR timing, wiring, or acoustics |
+| Phase 4 actual target compile | Clean rebuild passed using Arduino CLI 1.6.0 and Espressif core 3.3.12; FQBN `esp32:esp32:esp32:FlashMode=dio,FlashFreq=40,FlashSize=4M,PSRAM=disabled,UploadSpeed=115200`, all warnings enabled, no warnings; 276476 program bytes (21%), 22788 static RAM bytes (6%); no device opened or flashed |
+| Local build artifacts | Ignored tools/config `artifacts/tools/arduino/`, build tree `artifacts/firmware-build/`, binaries `artifacts/firmware/` including `esp32code.ino.bin`; generated files not committed |
+| Phase 4 sensor bench | Not run: one sensor then both, 50 attempts at 0.5/0.8/1.2/1.5 m; 90% valid and median absolute error ≤10 cm are provisional targets, not results |
+| Phase 4 scene/proximity/audio/FPS | Pi acceptance pending; request-only D/P behavior, unknown/stale handling, audible combined feedback, cleanup, and preview-rate comparison still to record |
 | Pending acceptance | Exact OpenCV version, image colors/clarity and exported-file inspection, recognition accuracy, local inference, supply/temperature/throttle checks, and optional neural voice |
 
 Continue with the remaining checks in the

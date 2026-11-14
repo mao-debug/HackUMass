@@ -9,6 +9,8 @@ sensor. macOS supports fixture replay. Explicit one-shot Gemini object detection
 and scene descriptions are optional cloud demonstrations. Phase 3 adds Gemini
 or local OCR and a short local speech response or WAV export. Gemini OCR and
 audible speech have passed a user-run Pi 5 check. Voice commands remain deferred.
+Phase 4 adds requested scene descriptions and independent left/right ultrasonic
+feedback over an ESP32 USB link. Its new physical sensor bench remains pending.
 
 The default run processes one synthetic sample frame with detection disabled.
 It opens no camera or preview, loads no model, makes no network request, and
@@ -106,7 +108,8 @@ The left pane shows the current camera feed; the right shows the selected
 image and request state, with boxes, frame ID, and age after a successful result.
 Delayed boxes are never drawn onto a newer
 frame. The profile requests 640×480 at **30 FPS**, while Gemini runs in one
-background worker. The supplied Pi run measured **11.21 FPS**; the requested
+background worker. The earlier Pi 4 run measured **11.21 FPS**; the later Pi 5
+run measured **23.43 FPS** as recorded below. The requested
 rate is not a throughput guarantee. Live Gemini uses a **60-second request
 timeout**; snapshot requests keep their existing 15-second timeout.
 `cloud.live_interval_s` is at least five seconds **after a response completes**;
@@ -133,6 +136,60 @@ uploads or key-file reads. The original `config/pi.yaml` remains the reproducibl
 2 FPS local MobileNet-SSD baseline. That temporary model supports only 20 VOC
 classes and can mislabel unsupported objects such as windows and computer
 mice. It is not used by the Gemini live command above.
+
+## Phase 4: requested scenes and local proximity
+
+The existing ESP32 sketch now uses **protocol v1**: an identification handshake
+and a newly acquired left/right pair for each request. **Upgrade the partner's
+old streaming firmware before connecting this reader**; its fused center/TTC/
+confidence/clearance output is deliberately rejected. Pins remain left
+GPIO25/34 and right GPIO26/35. Verify the separate echo dividers and common
+ground using [esp32code/README.md](esp32code/README.md). Native firmware tests
+do not establish a physical sensor pass.
+
+Only the optional USB reader needs `pyserial==3.5`. That download is approved
+and installed on Mac. On the Pi, the approved isolated install is:
+
+```sh
+PYTHONNOUSERSITE=1 .venv-pi/bin/python -m pip install --no-deps pyserial==3.5
+PYTHONNOUSERSITE=1 .venv-pi/bin/python scripts/check_sensors.py --list
+```
+
+Port listing opens no device. Use the actual board path returned by discovery;
+`/dev/ttyUSB0` below is an example, not automatic port selection. Close Arduino
+Serial Monitor before opening the same port.
+
+```sh
+# Pi desktop: no upload until D; no speech unless --speak is added.
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-phase4.yaml --continuous --scene-live --preview --proximity --sensor-port /dev/ttyUSB0 --report artifacts/phase4.json
+
+# One camera snapshot, one requested description, then fresh local readings/audio.
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-phase4.yaml --describe --proximity --sensor-port /dev/ttyUSB0 --speak --report artifacts/phase4-snapshot.json
+
+# Mac: explicitly simulated camera/proximity; P is local, D requests Gemini.
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv/bin/python -m vidi --config config/phase4-sim.yaml --continuous --scene-live --preview --proximity --report artifacts/phase4-sim.json
+```
+
+In the focused scene preview, **D** requests one owned camera frame from
+Gemini; **P** requests local proximity without an upload; **S** stops speech
+and pending narration; **R** rearms failed cloud requests and reconnects the
+sensor reader; **q/Esc** quits. `--speak` enables one short response per accepted
+action. No automatic narration or request queue is started. D uses the existing
+saved key/free-tier scope and waits at least five seconds after a completed
+cloud response before another request. R alone does not upload.
+
+Left/right are independent sensor channels, not object labels, a measured
+center, or distances to objects named by Gemini. The provisional nearby
+threshold is **1000 mm**, with **0.5-second** freshness expiry. Missing, stale,
+out-of-range, or failed readings stay unknown; they never establish clearance.
+Speech describes a snapshot checked when narration starts, not continuously
+updated conditions throughout the utterance. Existing Gemini live detection
+and OCR/read-aloud remain separate commands.
+
+[docs/phase4.md](docs/phase4.md) contains setup, failure behavior, protocol,
+simulation, and the controlled sensor bench. Photos establish the board/USB
+connection and pin labels; resistor values, actual accuracy, and Phase 4 Pi
+acceptance have not been measured. Optional Piper downloads remain pending.
 
 ## Raspberry Pi setup and acceptance
 
@@ -369,7 +426,7 @@ approved non-sensitive image upload.
 [config/pi-gemini.yaml](config/pi-gemini.yaml) selects the opt-in cloud snapshot,
 and [config/pi-imx500.yaml](config/pi-imx500.yaml) is the optional AI Camera profile.
 The `camera`,
-`simulation`, `detection`, `models`, `ocr`, `speech`, and `cloud` sections configure their
+`simulation`, `detection`, `models`, `ocr`, `speech`, `cloud`, and `proximity` sections configure their
 respective boundaries. Unknown keys and invalid values fail clearly. The
 `models.object_detection_backend`, `object_detection_path`, and
 `object_detection_config_path` settings select local detection assets.
@@ -423,6 +480,8 @@ Phase 1 established the foundation. Phase 2 covers camera/detection plus the
 explicit one-shot Gemini demonstrations described above. Phase 3 adds requested
 Gemini or local OCR and local speech. Gemini reading with audible eSpeak output
 has passed on Pi 5; offline Tesseract setup and acceptance remain pending.
+Phase 4 adds requested scene snapshots and fresh local two-channel proximity;
+its firmware/host software checks are separate from pending physical acceptance.
 Voice commands and wearable deployment/optimization remain later work.
 Model class coverage is limited to the selected model's labels; an empty
 detection list is not evidence that a path is clear. The full plan, official

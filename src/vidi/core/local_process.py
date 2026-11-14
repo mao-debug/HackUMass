@@ -6,6 +6,7 @@ import math
 import os
 import signal
 import subprocess
+import threading
 import time
 
 
@@ -15,6 +16,10 @@ _KILL_GRACE_S = 0.5
 
 class LocalProcessError(RuntimeError):
     """A sanitized process failure without command output or input contents."""
+
+
+class LocalProcessCancelled(LocalProcessError):
+    """An explicit caller cancellation, distinct from an engine failure."""
 
 
 def _signal_process_group(process: subprocess.Popen[bytes], sig: int) -> None:
@@ -92,7 +97,8 @@ def _close_pipes(process: subprocess.Popen[bytes]) -> None:
 
 
 def run_local_process(
-    argv: list[str], *, input_bytes: bytes, timeout_s: float
+    argv: list[str], *, input_bytes: bytes, timeout_s: float,
+    cancel_event: threading.Event | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
     """Run fixed arguments and communicate bytes within a finite deadline.
 
@@ -117,6 +123,8 @@ def run_local_process(
         valid_timeout = False
     if not valid_timeout:
         raise LocalProcessError("The local process timeout must be a finite positive number.")
+    if cancel_event is not None and cancel_event.is_set():
+        raise LocalProcessCancelled("The local process was cancelled.")
 
     arguments = argv.copy()
     deadline = time.monotonic() + timeout_s
@@ -139,8 +147,29 @@ def run_local_process(
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise subprocess.TimeoutExpired(arguments, timeout_s)
-        stdout, stderr = process.communicate(input=input_bytes, timeout=remaining)
+        if cancel_event is None:
+            stdout, stderr = process.communicate(input=input_bytes, timeout=remaining)
+        else:
+            first = True
+            while True:
+                if cancel_event.is_set():
+                    raise LocalProcessCancelled("The local process was cancelled.")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(arguments, timeout_s)
+                try:
+                    stdout, stderr = process.communicate(
+                        input=input_bytes if first else None, timeout=min(0.05, remaining),
+                    )
+                    if cancel_event.is_set():
+                        raise LocalProcessCancelled("The local process was cancelled.")
+                    break
+                except subprocess.TimeoutExpired:
+                    first = False
         return subprocess.CompletedProcess(arguments, process.returncode, stdout, stderr)
+    except LocalProcessCancelled:
+        _stop_process(process)
+        raise
     except subprocess.TimeoutExpired:
         _stop_process(process)
         raise LocalProcessError("The local process timed out.") from None

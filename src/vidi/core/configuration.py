@@ -176,6 +176,42 @@ class OcrSettings:
 
 
 @dataclass(frozen=True)
+class ProximitySettings:
+    """Optional local sensing; selecting a backend never opens a device."""
+
+    backend: str = "disabled"
+    port: str | None = None
+    fixture_path: Path | None = None
+    baud_rate: int = 115200
+    poll_hz: float = 5.0
+    response_timeout_s: float = 0.4
+    stale_after_s: float = 0.5
+    nearby_mm: int = 1000
+    startup_timeout_s: float = 3.0
+
+    def __post_init__(self) -> None:
+        if self.backend not in ("disabled", "fixture", "serial"):
+            raise ConfigurationError("proximity.backend must be disabled, fixture, or serial.")
+        _optional_text("proximity.port", self.port)
+        _optional_path("proximity.fixture_path", self.fixture_path)
+        if type(self.baud_rate) is not int or self.baud_rate != 115200:
+            raise ConfigurationError("proximity.baud_rate must be 115200 for protocol version 1.")
+        _positive_number("proximity.poll_hz", self.poll_hz)
+        if self.poll_hz > 5:
+            raise ConfigurationError("proximity.poll_hz cannot exceed 5 paired requests per second.")
+        _positive_number("proximity.response_timeout_s", self.response_timeout_s)
+        _positive_number("proximity.stale_after_s", self.stale_after_s)
+        if not self.response_timeout_s <= self.stale_after_s <= 0.5:
+            raise ConfigurationError("Proximity response timeout must fit inside a freshness limit of at most 0.5 seconds.")
+        _integer("proximity.nearby_mm", self.nearby_mm, 20)
+        if self.nearby_mm > 3000:
+            raise ConfigurationError("proximity.nearby_mm cannot exceed the firmware's 3000 mm limit.")
+        _positive_number("proximity.startup_timeout_s", self.startup_timeout_s)
+        if self.startup_timeout_s > 10:
+            raise ConfigurationError("proximity.startup_timeout_s cannot exceed 10 seconds.")
+
+
+@dataclass(frozen=True)
 class SpeechSettings:
     """One bounded utterance or explicit synthesis export, without queues."""
 
@@ -235,6 +271,7 @@ class AppSettings:
     cloud: CloudSettings = field(default_factory=CloudSettings)
     ocr: OcrSettings = field(default_factory=OcrSettings)
     speech: SpeechSettings = field(default_factory=SpeechSettings)
+    proximity: ProximitySettings = field(default_factory=ProximitySettings)
 
     def __post_init__(self) -> None:
         if self.log_level not in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
@@ -278,7 +315,7 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         raise ConfigurationError(f"Cannot read configuration {config_path}: {exc}") from exc
     if document is None:
         raise ConfigurationError("Configuration must contain a YAML mapping, not an empty document.")
-    values = _mapping(document, "root", {"camera", "simulation", "models", "log_level", "detection", "cloud", "ocr", "speech"})
+    values = _mapping(document, "root", {"camera", "simulation", "models", "log_level", "detection", "cloud", "ocr", "speech", "proximity"})
     return AppSettings(
         camera=_section(values, "camera", CameraSettings, config_path.parent),
         simulation=_section(values, "simulation", SimulationSettings, config_path.parent),
@@ -288,6 +325,7 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         cloud=_section(values, "cloud", CloudSettings, config_path.parent),
         ocr=_section(values, "ocr", OcrSettings, config_path.parent),
         speech=_section(values, "speech", SpeechSettings, config_path.parent),
+        proximity=_section(values, "proximity", ProximitySettings, config_path.parent),
     )
 
 
@@ -297,9 +335,31 @@ def validate_runtime_settings(
     continuous: bool = False,
     gemini_live: bool = False,
     gemini_read: bool = False,
+    scene_live: bool = False,
+    proximity: bool = False,
 ) -> None:
     """Check backend combinations after command-line overrides are applied."""
     backend = settings.models.object_detection_backend or "none"
+    if scene_live:
+        if not continuous or not settings.simulation.preview:
+            raise ConfigurationError("--scene-live requires --continuous and --preview for keyboard activation.")
+        if any((describe, read_text, gemini_detect, gemini_live, gemini_read)):
+            raise ConfigurationError("Choose --scene-live by itself as the camera scene action.")
+        if backend != "none" or settings.camera.source == "imx500":
+            raise ConfigurationError("Scene preview requires detector none and an ordinary camera source.")
+        if speech_output is not None:
+            raise ConfigurationError("Live scene mode supports requested playback, not WAV export.")
+        if settings.models.scene_description_backend not in (None, "gemini"):
+            raise ConfigurationError("Scene preview supports the existing gemini scene backend.")
+    if proximity:
+        if not (describe or scene_live):
+            raise ConfigurationError("--proximity requires --describe or --continuous --scene-live.")
+        if settings.proximity.backend == "disabled":
+            raise ConfigurationError("Select a fixture or serial proximity backend before requesting sensing.")
+        if settings.proximity.backend == "serial" and settings.proximity.port is None:
+            raise ConfigurationError("Serial sensing requires --sensor-port or proximity.port; use scripts/check_sensors.py --list.")
+        if settings.proximity.backend == "fixture" and settings.proximity.fixture_path is None:
+            raise ConfigurationError("Fixture sensing requires proximity.fixture_path.")
     if gemini_read:
         if read_text or describe or gemini_detect or gemini_live or continuous:
             raise ConfigurationError("Choose --gemini-read by itself as the reading action; it cannot be combined with local reading or other cloud/live actions.")
@@ -311,13 +371,13 @@ def validate_runtime_settings(
             raise ConfigurationError("Use --source picamera2 for a Raspberry Pi Gemini reading snapshot.")
     if gemini_live and not continuous:
         raise ConfigurationError("--gemini-live requires --continuous and authorizes repeated camera images to Google.")
-    if continuous and (describe or read_text or gemini_detect or speak or speech_output is not None):
+    if continuous and not scene_live and (describe or read_text or gemini_detect or speak or speech_output is not None):
         raise ConfigurationError("Continuous mode cannot be combined with snapshot reading, descriptions, detection, or speech actions.")
     if settings.simulation.async_detection and not continuous:
         raise ConfigurationError("The asynchronous live profile requires --continuous.")
     if settings.simulation.async_detection and backend not in ("none", "opencv_ssd", "fixture", "gemini"):
         raise ConfigurationError("Asynchronous live preview supports ordinary capture with local or Gemini detection.")
-    if (speak or speech_output is not None) and not (read_text or gemini_read or describe or gemini_detect):
+    if (speak or speech_output is not None) and not (read_text or gemini_read or describe or gemini_detect or scene_live):
         raise ConfigurationError("Speech requires --read-text, --gemini-read, --describe, or --gemini-detect.")
     if speak and speech_output is not None:
         raise ConfigurationError("Choose either --speak or --speech-output, not both.")
@@ -372,10 +432,14 @@ def validate_runtime_settings(
     report = settings.simulation.report_path
     if output is not None and report is not None and output.resolve() == report.resolve():
         raise ConfigurationError("The image output and JSON report must use different paths.")
-    if (read_text or gemini_read or gemini_detect or gemini_live or describe) and settings.camera.image_path is not None:
+    if (read_text or gemini_read or gemini_detect or gemini_live or describe or scene_live) and settings.camera.image_path is not None:
         for other in (output, report):
             if other is not None and other.resolve() == settings.camera.image_path.resolve():
                 raise ConfigurationError("Exports must not overwrite the input image.")
+    if proximity and settings.proximity.backend == "fixture" and settings.proximity.fixture_path is not None:
+        for other in (output, report, speech_output):
+            if other is not None and other.resolve() == settings.proximity.fixture_path.resolve():
+                raise ConfigurationError("Exports must not overwrite the proximity fixture input.")
     if speech_output is not None:
         for other in (output, report, settings.camera.image_path):
             if other is not None and speech_output.resolve() == other.resolve():

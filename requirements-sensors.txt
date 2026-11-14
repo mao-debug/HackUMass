@@ -1,0 +1,2 @@
+# Optional local USB serial communication; no GPIO package or cloud service.
+pyserial==3.5

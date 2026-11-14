@@ -11,12 +11,13 @@ from pathlib import Path
 import sys
 import tempfile
 import time
+import threading
 from typing import TYPE_CHECKING
 import wave
 
 from vidi.audio.text_to_speech import _prepare_text, _validate_wav
 from vidi.audio.wav_playback import play_wav
-from vidi.core.local_process import LocalProcessError, run_local_process
+from vidi.core.local_process import LocalProcessCancelled, LocalProcessError, run_local_process
 from vidi.core.types import SpeechResult
 
 if TYPE_CHECKING:
@@ -29,7 +30,8 @@ class PiperSpeech:
     def __init__(self, settings: SpeechSettings) -> None:
         self.settings = settings
 
-    def speak(self, text: str, *, output_path: Path | None = None) -> SpeechResult:
+    def speak(self, text: str, *, output_path: Path | None = None,
+              cancel_event: threading.Event | None = None) -> SpeechResult:
         started = time.monotonic()
         deadline = started + self.settings.timeout_s
         prepared, truncated = _prepare_text(text, self.settings.max_words)
@@ -47,10 +49,15 @@ class PiperSpeech:
             )
 
         def remaining() -> float:
+            if cancel_event is not None and cancel_event.is_set():
+                raise LocalProcessCancelled("The speech request was cancelled.")
             budget = deadline - time.monotonic()
             if budget <= 0:
                 raise LocalProcessError("The speech deadline expired.")
             return budget
+
+        if cancel_event is not None and cancel_event.is_set():
+            return result("cancelled")
 
         try:
             if self.settings.piper_model_path is None:
@@ -83,6 +90,7 @@ class PiperSpeech:
                 [str(python), "-m", "piper", "--model", str(model), "--output-file", str(temporary),
                  "--length-scale", str(self.settings.piper_length_scale)],
                 input_bytes=prepared.encode("utf-8"), timeout_s=remaining(),
+                **({"cancel_event": cancel_event} if cancel_event is not None else {}),
             )
             if completed.returncode != 0:
                 return result("failed", "Piper synthesis failed. Check the local runtime and voice model.")
@@ -93,9 +101,14 @@ class PiperSpeech:
                 temporary.replace(destination)
                 temporary = None
             else:
-                play_wav(temporary, timeout_s=remaining(), player=self.settings.player)
+                play_wav(
+                    temporary, timeout_s=remaining(), player=self.settings.player,
+                    **({"cancel_event": cancel_event} if cancel_event is not None else {}),
+                )
                 remaining()
             return result("completed")
+        except LocalProcessCancelled:
+            return result("cancelled")
         except LocalProcessError:
             return result("failed", "Piper synthesis or playback could not complete. Check local setup and timeout.")
         except (OSError, UnicodeError, wave.Error, EOFError, ValueError, RuntimeError):

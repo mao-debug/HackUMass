@@ -1,0 +1,38 @@
+# --describe is one image; --continuous --scene-live --preview enables D/P keys.
+# Sensing requires --proximity and an explicit --sensor-port; speech needs --speak.
+camera:
+  source: picamera2
+  width: 640
+  height: 480
+  fps: 30.0
+  startup_timeout_s: 30.0
+  capture_timeout_s: 5.0
+  settle_s: 1.0
+  autofocus: single_if_supported
+  autofocus_timeout_s: 4.0
+simulation:
+  max_frames: 1
+  preview: false
+models:
+  object_detection_backend: none
+  scene_description_backend: gemini
+  text_to_speech_backend: espeak_ng
+cloud:
+  model: gemini-3.5-flash-lite
+  timeout_s: 60.0
+  max_output_tokens: 256
+  max_image_edge: 1024
+  live_interval_s: 5.0
+speech:
+  speed_wpm: 150
+  max_words: 60
+  timeout_s: 45.0
+proximity:
+  backend: serial
+  port: null
+  baud_rate: 115200
+  poll_hz: 5.0
+  response_timeout_s: 0.4
+  stale_after_s: 0.5
+  startup_timeout_s: 3.0
+  nearby_mm: 1000

@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "snapshots": [
+    {
+      "left": {"status": "ok", "distance_mm": 600},
+      "right": {"status": "ok", "distance_mm": 1500}
+    },
+    {
+      "left": {"status": "ok", "distance_mm": 650},
+      "right": {"status": "no_echo", "distance_mm": null}
+    },
+    {
+      "left": {"status": "ok", "distance_mm": 750},
+      "right": {"status": "ok", "distance_mm": 800}
+    }
+  ]
+}

@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from dataclasses import replace
 from pathlib import Path
 
@@ -17,7 +17,7 @@ from vidi.core.credentials import CredentialError, prompted_gemini_key, save_gem
 def build_parser() -> argparse.ArgumentParser:
     """Describe local backends and the per-run cloud opt-in."""
     parser = argparse.ArgumentParser(
-        description="vidi Phase 3: camera detection, Gemini snapshots, printed-text reading, and optional speech.",
+        description="vidi Phase 4: camera detection, requested scene descriptions, local proximity, printed-text reading, and optional speech.",
         allow_abbrev=False,
     )
     parser.add_argument("--version", action="version", version=f"vidi {__version__}")
@@ -26,7 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--image", type=Path, help="Image path (selects image unless --source is given)")
     parser.add_argument("--camera-index", type=int, help="Webcam index (selects webcam unless --source is given)")
     parser.add_argument("--max-frames", type=int, help="Positive frame limit (default: 1)")
-    parser.add_argument("--continuous", action="store_true", help="Keep the camera running until q/Esc or Ctrl+C; Gemini also requires --gemini-live")
+    parser.add_argument("--continuous", action="store_true", help="Keep the camera running until q/Esc or Ctrl+C; cloud actions require --gemini-live or --scene-live")
     parser.add_argument("--preview", action=argparse.BooleanOptionalAction, default=None,
                         help="Open a local preview window; requires a desktop display")
     parser.add_argument("--output", type=Path, help="Save the last frame to a local image path")
@@ -41,14 +41,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--read-text", action="store_true", help="Read printed text once from the final raw frame (local OCR)")
     parser.add_argument("--gemini-read", action="store_true", help="Send ONE final raw image to Gemini to transcribe printed text (cloud opt-in)")
     speech = parser.add_mutually_exclusive_group()
-    speech.add_argument("--speak", action="store_true", help="Speak one requested reading or Gemini result")
+    speech.add_argument("--speak", action="store_true", help="Speak requested reading, scene, or local proximity feedback")
     speech.add_argument("--speech-output", type=Path, help="Synthesize one requested reading or Gemini result to WAV without playback")
     parser.add_argument("--gemini-detect", action="store_true", help="Send ONE final raw image to Gemini for object labels and boxes (cloud opt-in)")
     parser.add_argument("--gemini-live", action="store_true", help="With --continuous, repeatedly send frames to Gemini, no faster than once per 5 seconds; stop uploads on error")
     parser.add_argument("--prompt-key", action="store_true", help="Enter the Gemini key privately for this run; accepts no key argument")
     parser.add_argument("--save-key", action="store_true", help="Privately enter and save a Gemini key locally, then exit; accepts no key argument")
     parser.add_argument("--describe", action="store_true", help="Send ONE last unannotated image to Gemini (cloud opt-in)")
-    parser.add_argument("--question", help="Optional typed question for --describe; does not enable voice input")
+    parser.add_argument("--scene-live", action="store_true", help="With --continuous --preview, D requests one scene image, P reads local proximity; no automatic uploads or speech")
+    parser.add_argument("--proximity", action="store_true", help="Explicitly enable local sensor readings with --describe or --scene-live")
+    parser.add_argument("--sensor-port", help="Explicit ESP32 USB serial port; requires --proximity (no automatic port selection)")
+    parser.add_argument("--question", help="Optional typed question for --describe or --scene-live; does not enable voice input")
     parser.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"))
     return parser
 
@@ -119,8 +122,8 @@ def main(argv: list[str] | None = None) -> int:
             detection_changes["confidence_threshold"] = args.threshold
         if args.max_detections is not None:
             detection_changes["max_detections"] = args.max_detections
-        if args.question is not None and not args.describe:
-            raise ConfigurationError("--question requires --describe (an explicit Gemini upload opt-in).")
+        if args.question is not None and not (args.describe or args.scene_live):
+            raise ConfigurationError("--question requires --describe or --scene-live (explicit Gemini upload opt-ins).")
         if args.question is not None and (not args.question.strip() or len(args.question) > 500):
             raise ConfigurationError("--question must contain between 1 and 500 characters.")
         settings = replace(
@@ -130,7 +133,10 @@ def main(argv: list[str] | None = None) -> int:
             models=replace(settings.models, **model_changes),
             detection=replace(settings.detection, **detection_changes),
             log_level=args.log_level or settings.log_level,
+            proximity=replace(settings.proximity, port=args.sensor_port) if args.sensor_port is not None else settings.proximity,
         )
+        if args.sensor_port is not None and not args.proximity:
+            raise ConfigurationError("--sensor-port requires --proximity; configuration alone never opens a sensor.")
         if settings.models.object_detection_backend == "gemini":
             if args.threshold is not None:
                 raise ConfigurationError("--threshold applies to scored local detectors; Gemini returns no confidence scores.")
@@ -144,9 +150,10 @@ def main(argv: list[str] | None = None) -> int:
             continuous=args.continuous,
             gemini_live=args.gemini_live,
             gemini_read=args.gemini_read,
+            scene_live=args.scene_live, proximity=args.proximity,
         )
-        if args.prompt_key and not (args.gemini_detect or args.describe or args.gemini_live or args.gemini_read):
-            raise ConfigurationError("--prompt-key requires --gemini-detect, --gemini-live, --gemini-read, or --describe.")
+        if args.prompt_key and not (args.gemini_detect or args.describe or args.gemini_live or args.gemini_read or args.scene_live):
+            raise ConfigurationError("--prompt-key requires --gemini-detect, --gemini-live, --gemini-read, --describe, or --scene-live.")
 
         # Keep --help/--version available even if OpenCV has not been installed.
         from vidi.camera.capture import CaptureError
@@ -155,12 +162,26 @@ def main(argv: list[str] | None = None) -> int:
 
         key_context = (
             prompted_gemini_key() if args.prompt_key
-            else saved_gemini_key() if args.gemini_detect or args.describe or args.gemini_live or args.gemini_read
+            else saved_gemini_key() if args.gemini_detect or args.describe or args.gemini_live or args.gemini_read or args.scene_live
             else nullcontext()
         )
-        with key_context:
+        with ExitStack() as contexts:
             try:
-                if args.gemini_live:
+                contexts.enter_context(key_context)
+            except CredentialError as exc:
+                if not args.scene_live or args.prompt_key:
+                    raise
+                logging.getLogger(__name__).warning(
+                    "Saved scene credentials unavailable: %s. Local proximity remains available.", exc,
+                )
+            try:
+                if args.scene_live:
+                    result = run_simulation(
+                        settings, continuous=True, scene_live=True, proximity=args.proximity,
+                        speak=args.speak, question=args.question or "What is in front of me?",
+                    )
+                    return 130 if result.interrupted else 0
+                elif args.gemini_live:
                     result = run_simulation(settings, continuous=True, gemini_live=True)
                     return 130 if result.interrupted else (1 if result.last_inference is not None and result.last_inference.status != "ready" else 0)
                 elif args.gemini_detect:
@@ -174,6 +195,8 @@ def main(argv: list[str] | None = None) -> int:
                         return 1
                 elif args.describe:
                     options = {"describe": True, "question": args.question or "What is in front of me?"}
+                    if args.proximity:
+                        options["proximity"] = True
                     if args.speak or speech_output is not None:
                         options.update(speak=args.speak, speech_output=speech_output)
                     result = run_simulation(settings, **options)

@@ -1,325 +1,272 @@
 /*
-  glasses_ultrasonic.ino  -  ESP32 Dev Module
-  Two HC-SR04 sensors on the front-left / front-right corners of a pair of glasses.
-  Fuses both ranges into one obstacle estimate and streams newline-delimited JSON
-  over USB serial (115200 baud) to a Raspberry Pi.
+  vidi ultrasonic firmware: classic ESP32 Dev Module, Arduino-ESP32 3.3.12.
+  Left TRIG/ECHO: GPIO25/34. Right: GPIO26/35. Each HC-SR04 needs a separate
+  5 V -> 3.3 V echo divider and a common ground; see README.md.
 
-  WIRING (HC-SR04 runs on 5 V, ESP32 GPIO is 3.3 V and NOT 5 V tolerant):
-    VCC  -> ESP32 VIN (5 V)         GND -> GND
-    TRIG -> GPIO directly (3.3 V is enough to trigger)
-    ECHO -> 1k ohm -> GPIO node -> 2k ohm -> GND   (divider: 5 V -> ~3.3 V)
-    (or use 3.3 V-native HC-SR04P / RCWL-1601 modules and skip the divider)
-
-    Left  sensor: TRIG=GPIO25  ECHO=GPIO34
-    Right sensor: TRIG=GPIO26  ECHO=GPIO35
-
-  PIPELINE
-    1. Sensors fire alternately (never together) -> no acoustic cross-talk.
-    2. Echo width measured by pin-change interrupt (non-blocking, microsecond timing).
-    3. Per sensor: median-of-3 spike rejection -> alpha-beta tracker
-       (smooths + estimates closing speed, gates outliers, coasts over short dropouts).
-    4. Both tracks are extrapolated to the same instant (sensors fire 40 ms apart).
-    5. Fusion: if the two ranges are geometrically consistent, triangulate
-       (circle intersection) to get x/y/bearing; otherwise fall back gracefully.
-    6. Hazard level from range AND time-to-contact.
-
-  OUTPUT (one JSON object per line, ~12 Hz). Distances in cm, bearing in degrees
-  (negative = left, positive = right), vel in cm/s (negative = closing).
-    {"seq":42,"t":51234,"l":142.3,"r":150.1,"rng":145.0,"brg":-3.2,"x":-6.1,"y":144.8,
-     "vel":-35.2,"ttc":4.1,"mode":"tri","zone":"center","haz":"caution","conf":1.0}
-
-  INPUT (optional, from Pi): "T22.5\n" sets air temperature in C for speed-of-sound
-  compensation.
+  USB 115200: H1 <16 lowercase hex> identifies this firmware.
+  R1 <16 lowercase hex> requests a NEW left/right pair. No free-running
+  stream, prediction, triangulation, TTC, confidence, or clearance claims.
+  Interrupt acquisition, >=100 ms global trigger gap, 30 ms echo deadline.
+  Sequential triggers reduce but cannot guarantee absence of crosstalk.
 */
 
 #include <Arduino.h>
-#include <math.h>
-#include "esp_timer.h"
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 #include "driver/gpio.h"
+#include "esp_random.h"
+#include "esp_timer.h"
 
-// ====================== CONFIG ======================
-constexpr uint8_t  TRIG_L = 25, ECHO_L = 34;
-constexpr uint8_t  TRIG_R = 26, ECHO_R = 35;
+constexpr uint8_t TRIG_L = 25, ECHO_L = 34;
+constexpr uint8_t TRIG_R = 26, ECHO_R = 35;
+constexpr uint32_t ECHO_TIMEOUT_US = 30000;
+constexpr uint32_t TRIGGER_GAP_US = 100000;
+constexpr int MIN_MM = 20, MAX_MM = 3000;
+constexpr size_t COMMAND_CAPACITY = 64;
+constexpr size_t OUTPUT_CAPACITY = 512;
+constexpr float MM_PER_US = (331.3f + 0.606f * 20.0f) / 2000.0f;
 
-constexpr float    BASELINE_CM = 14.0f;   // distance between the two sensor centres - MEASURE YOURS
-constexpr float    BASE_TOL_CM = 4.0f;    // slack on the triangle-inequality check (noise)
+portMUX_TYPE echoMux = portMUX_INITIALIZER_UNLOCKED;
 
-constexpr uint32_t SLOT_MS     = 40;      // time per sensor (>= 2*maxRange/c + ring-down); 2 sensors -> ~12.5 Hz
-constexpr float    MIN_CM      = 2.0f;    // HC-SR04 blind zone
-constexpr float    MAX_CM      = 300.0f;  // usable range for small obstacles (spec says 400)
-
-constexpr float    ALPHA       = 0.5f;    // alpha-beta position gain
-constexpr float    BETA        = 0.15f;   // alpha-beta velocity gain
-constexpr float    GATE_CM     = 60.0f;   // innovation gate; persistent jumps (3 frames) reset the track
-constexpr float    V_MAX_CMS   = 400.0f;  // clamp on estimated closing speed
-constexpr uint8_t  MAX_COAST   = 2;       // frames to coast on after echoes disappear
-
-constexpr float    DANGER_CM   = 100.0f;
-constexpr float    CAUTION_CM  = 200.0f;
-constexpr float    AWARE_CM    = 300.0f;
-constexpr float    TTC_DANGER_S  = 1.5f;
-constexpr float    TTC_CAUTION_S = 3.0f;
-constexpr float    ZONE_DEG    = 10.0f;   // |bearing| beyond this = left/right instead of center
-
-float gTempC = 20.0f;                     // updated by "T<celsius>" command
-
-// ====================== SENSOR STATE ======================
 struct Sensor {
   uint8_t trig, echo;
-  volatile uint32_t tRise;
-  volatile uint32_t tFall;
-  volatile bool gotFall;
-
-  float   win[3];          // last 3 raw readings (NAN = no echo)
-  uint8_t wi;
-
-  bool     valid;          // tracker has a lock
-  float    x;              // filtered range (cm)
-  float    v;              // filtered range-rate (cm/s)
-  uint32_t tLast;          // ms timestamp of last tracker update
-  uint8_t  misses, jumps;
-
-  Sensor(uint8_t t, uint8_t e)
-    : trig(t), echo(e), tRise(0), tFall(0), gotFall(false), wi(0),
-      valid(false), x(0), v(0), tLast(0), misses(0), jumps(0) {
-    win[0] = win[1] = win[2] = NAN;
-  }
+  volatile bool armed = false;
+  volatile bool rose = false;
+  volatile bool complete = false;
+  volatile bool error = false;
+  volatile bool timedOut = false;
+  volatile uint32_t openedUs = 0;
+  volatile uint32_t riseUs = 0;
+  volatile uint32_t fallUs = 0;
+  Sensor(uint8_t triggerPin, uint8_t echoPin) : trig(triggerPin), echo(echoPin) {}
 };
 
-Sensor SL(TRIG_L, ECHO_L);
-Sensor SR(TRIG_R, ECHO_R);
-Sensor* sensors[2] = { &SL, &SR };
+struct Reading {
+  const char* status = "error";
+  int distanceMm = -1;
+  uint32_t observedUs = 0;
+};
 
-int8_t   activeIdx = -1;
-uint32_t slotStart = 0;
-uint32_t seqNo = 0;
+enum class PairPhase { Idle, WaitLeft, ReadLeft, WaitRight, ReadRight };
+Sensor SL(TRIG_L, ECHO_L), SR(TRIG_R, ECHO_R);
+Reading leftReading, rightReading;
+PairPhase pairPhase = PairPhase::Idle;
+char requestId[17] = {};
+char bootId[9] = {};
+uint32_t sequenceNo = 0;
+uint32_t lastSlotUs = 0;
+bool haveSlot = false;
 
-// ====================== LOW LEVEL ======================
-void IRAM_ATTR echoISR(void* arg) {
-  Sensor* s = (Sensor*)arg;
-  uint32_t now = (uint32_t)esp_timer_get_time();
-  if (gpio_get_level((gpio_num_t)s->echo)) {
-    s->tRise = now;
-    s->gotFall = false;
-  } else if (s->tRise) {
-    s->tFall = now;
-    s->gotFall = true;
+// Every capture field is read/written under this same mux in main and ISR.
+void IRAM_ATTR echoISR(void* argument) {
+  Sensor* sensor = static_cast<Sensor*>(argument);
+  portENTER_CRITICAL_ISR(&echoMux);
+  const uint32_t now = static_cast<uint32_t>(esp_timer_get_time());
+  if (sensor->armed) {
+    if (static_cast<uint32_t>(now - sensor->openedUs) >= ECHO_TIMEOUT_US) {
+      sensor->armed = false;
+      sensor->timedOut = true;
+    } else if (gpio_get_level(static_cast<gpio_num_t>(sensor->echo))) {
+      if (!sensor->rose) {
+        sensor->riseUs = now;
+        sensor->rose = true;
+      }
+    } else if (sensor->rose) {
+      sensor->fallUs = now;
+      sensor->complete = true;
+      sensor->armed = false;  // Freeze FIRST complete pulse, including zero width.
+    }
   }
+  portEXIT_CRITICAL_ISR(&echoMux);
 }
 
-inline float cmPerUs() {                       // round-trip already halved
-  return (331.3f + 0.606f * gTempC) / 20000.0f;
+void startChannel(Sensor& sensor) {
+  portENTER_CRITICAL(&echoMux);
+  sensor.armed = false;
+  sensor.rose = false;
+  sensor.complete = false;
+  sensor.timedOut = false;
+  sensor.riseUs = 0;
+  sensor.fallUs = 0;
+  sensor.openedUs = static_cast<uint32_t>(esp_timer_get_time());
+  sensor.error = gpio_get_level(static_cast<gpio_num_t>(sensor.echo)) != 0;
+  const bool blocked = sensor.error;
+  portEXIT_CRITICAL(&echoMux);
+
+  if (!blocked) {
+    digitalWrite(sensor.trig, LOW);
+    delayMicroseconds(2);
+    digitalWrite(sensor.trig, HIGH);
+    delayMicroseconds(10);
+    portENTER_CRITICAL(&echoMux);
+    digitalWrite(sensor.trig, LOW);
+    sensor.openedUs = static_cast<uint32_t>(esp_timer_get_time());
+    // A line already high cannot be associated with this trigger safely.
+    sensor.error = gpio_get_level(static_cast<gpio_num_t>(sensor.echo)) != 0;
+    sensor.armed = !sensor.error;
+    portEXIT_CRITICAL(&echoMux);
+  }
+  // Pace failed attempts too; this also guarantees >=100 ms between triggers.
+  lastSlotUs = static_cast<uint32_t>(esp_timer_get_time());
+  haveSlot = true;
 }
 
-void fire(Sensor& s) {
-  s.tRise = 0;
-  s.gotFall = false;
-  digitalWrite(s.trig, LOW);
-  delayMicroseconds(2);
-  digitalWrite(s.trig, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(s.trig, LOW);
-}
+bool finishChannel(Sensor& sensor, Reading& reading) {
+  bool complete, error, timedOut;
+  uint32_t opened, rise, fall;
+  const uint32_t now = static_cast<uint32_t>(esp_timer_get_time());
+  portENTER_CRITICAL(&echoMux);
+  if (sensor.armed && static_cast<uint32_t>(now - sensor.openedUs) >= ECHO_TIMEOUT_US) {
+    sensor.armed = false;
+    sensor.timedOut = true;
+  }
+  complete = sensor.complete;
+  error = sensor.error;
+  timedOut = sensor.timedOut;
+  opened = sensor.openedUs;
+  rise = sensor.riseUs;
+  fall = sensor.fallUs;
+  portEXIT_CRITICAL(&echoMux);
+  if (!complete && !error && !timedOut) return false;
 
-float readRaw(Sensor& s) {
-  if (!s.gotFall) return NAN;
-  uint32_t pulse = s.tFall - s.tRise;
-  float cm = pulse * cmPerUs();
-  if (cm < MIN_CM || cm > MAX_CM) return NAN;
-  return cm;
-}
-
-// ====================== FILTERING ======================
-float median3(const float* w) {
-  float a[3];
-  uint8_t n = 0;
-  for (uint8_t i = 0; i < 3; i++) if (!isnan(w[i])) a[n++] = w[i];
-  if (n < 2) return NAN;                        // need 2 of last 3 to call it a detection
-  if (n == 2) return 0.5f * (a[0] + a[1]);
-  if (a[0] > a[1]) { float t = a[0]; a[0] = a[1]; a[1] = t; }
-  if (a[1] > a[2]) { float t = a[1]; a[1] = a[2]; a[2] = t; }
-  if (a[0] > a[1]) { float t = a[0]; a[0] = a[1]; a[1] = t; }
-  return a[1];
-}
-
-void updateTrack(Sensor& s, float z, uint32_t now) {
-  float dt = s.tLast ? (now - s.tLast) / 1000.0f : 0.08f;
-  if (dt < 0.01f) dt = 0.01f;
-  if (dt > 0.5f)  dt = 0.5f;
-
-  if (!isnan(z)) {
-    if (!s.valid) {
-      s.x = z; s.v = 0; s.valid = true; s.jumps = 0;
+  reading.distanceMm = -1;
+  if (error) {
+    reading.status = "error";
+    reading.observedUs = opened;
+  } else if (!complete) {
+    reading.status = "no_echo";
+    reading.observedUs = opened + ECHO_TIMEOUT_US;
+  } else {
+    reading.observedUs = fall;
+    const uint32_t width = fall - rise;  // Unsigned subtraction handles timer wrap.
+    if (!width) {
+      reading.status = "error";
     } else {
-      float xp  = s.x + s.v * dt;               // predict
-      float res = z - xp;                       // innovation
-      if (fabsf(res) > GATE_CM) {
-        if (++s.jumps >= 3) { s.x = z; s.v = 0; s.jumps = 0; }   // new object really is there
-        else                { s.x = xp; }                        // ignore as outlier
+      const int mm = static_cast<int>(width * MM_PER_US + 0.5f);
+      if (mm < MIN_MM || mm > MAX_MM) {
+        reading.status = "out_of_range";
       } else {
-        s.jumps = 0;
-        s.x = xp + ALPHA * res;
-        s.v += (BETA / dt) * res;
-        s.v = constrain(s.v, -V_MAX_CMS, V_MAX_CMS);
+        reading.status = "ok";
+        reading.distanceMm = mm;
       }
     }
-    s.misses = 0;
-  } else if (s.valid) {
-    if (++s.misses > MAX_COAST) { s.valid = false; s.v = 0; }
-    else                        { s.x += s.v * dt; }
   }
-  if (s.valid && s.x < MIN_CM) s.x = MIN_CM;
-  s.tLast = now;
+  return true;
 }
 
-// Track extrapolated to "now" so L and R refer to the same instant.
-float rangeAt(const Sensor& s, uint32_t now) {
-  if (!s.valid) return NAN;
-  float r = s.x + s.v * ((now - s.tLast) / 1000.0f);
-  return r < MIN_CM ? MIN_CM : r;
+void emitLine(const char* line, int length) {
+  // Include the sole newline in the protocol's 512-byte limit.
+  if (length > 0 && static_cast<size_t>(length) < OUTPUT_CAPACITY) {
+    Serial.write(reinterpret_cast<const uint8_t*>(line), static_cast<size_t>(length));
+    Serial.write(static_cast<uint8_t>('\n'));
+  }
 }
 
-// ====================== FUSION + OUTPUT ======================
-static const char* fmt(char* buf, size_t n, float v, int dec) {
-  if (isnan(v)) return "null";
-  snprintf(buf, n, "%.*f", dec, v);
-  return buf;
+void emitHello(const char* token) {
+  char line[OUTPUT_CAPACITY];
+  const int n = snprintf(line, sizeof(line),
+      "{\"v\":1,\"type\":\"hello\",\"id\":\"%s\",\"fw\":\"vidi_ultrasonic\","
+      "\"boot\":\"%s\",\"channels\":[\"left\",\"right\"]}", token, bootId);
+  emitLine(line, n);
 }
 
-void fuseAndEmit(uint32_t now) {
-  const float half = BASELINE_CM * 0.5f;
-  float rL = rangeAt(SL, now), rR = rangeAt(SR, now);
-  bool vL = !isnan(rL), vR = !isnan(rR);
-
-  float x = NAN, y = NAN, rng = NAN, brg = NAN, conf = 0.0f;
-  const char* mode = "none";
-  const char* zone = "none";
-
-  if (vL && vR) {
-    if (fabsf(rL - rR) <= BASELINE_CM + BASE_TOL_CM) {
-      // Circle intersection: L at (-b/2,0), R at (+b/2,0), +x = right, +y = forward
-      x = (rL * rL - rR * rR) / (2.0f * BASELINE_CM);
-      float h  = x + half;
-      float y2 = rL * rL - h * h;
-      y = y2 > 0 ? sqrtf(y2) : 0.0f;
-      mode = "tri";
-      conf = 1.0f;
-    } else {
-      // Ranges differ by more than the baseline allows: two different objects
-      // (or one specular miss). Report the nearer one on its side.
-      bool leftNear = rL < rR;
-      y = leftNear ? rL : rR;
-      x = leftNear ? -half : half;
-      mode = "split";
-      conf = 0.6f;
-    }
-  } else if (vL || vR) {
-    y = vL ? rL : rR;
-    x = vL ? -half : half;
-    mode = vL ? "left_only" : "right_only";
-    conf = 0.5f;
-  }
-
-  if (!isnan(x)) {
-    rng = sqrtf(x * x + y * y);
-    brg = atan2f(x, y) * 57.29578f;
-    if (SL.valid && SL.misses) conf -= 0.2f;    // coasting = less trust
-    if (SR.valid && SR.misses) conf -= 0.2f;
-    if (conf < 0.1f) conf = 0.1f;
-
-    if      (!strcmp(mode, "left_only"))  zone = "left";
-    else if (!strcmp(mode, "right_only")) zone = "right";
-    else if (brg < -ZONE_DEG || (!strcmp(mode, "split") && x < 0)) zone = "left";
-    else if (brg >  ZONE_DEG || (!strcmp(mode, "split") && x > 0)) zone = "right";
-    else zone = "center";
-  }
-
-  // Relative closing speed (includes the wearer's own walking speed)
-  float vel = NAN;
-  if (vL && vR) vel = 0.5f * (SL.v + SR.v);
-  else if (vL)  vel = SL.v;
-  else if (vR)  vel = SR.v;
-
-  float ttc = NAN;
-  if (!isnan(vel) && !isnan(rng) && vel < -10.0f) ttc = rng / (-vel);
-
-  uint8_t haz = 0;
-  if (!isnan(rng)) {
-    if      (rng < DANGER_CM)  haz = 3;
-    else if (rng < CAUTION_CM) haz = 2;
-    else if (rng < AWARE_CM)   haz = 1;
-    if (!isnan(ttc) && rng < AWARE_CM) {
-      if      (ttc < TTC_DANGER_S)  haz = 3;
-      else if (ttc < TTC_CAUTION_S) haz = max<uint8_t>(haz, 2);
-    }
-  }
-  static const char* HAZ[4] = { "clear", "aware", "caution", "danger" };
-
-  char b[8][12];
-  char line[256];
-  snprintf(line, sizeof(line),
-    "{\"seq\":%lu,\"t\":%lu,\"l\":%s,\"r\":%s,\"rng\":%s,\"brg\":%s,\"x\":%s,\"y\":%s,"
-    "\"vel\":%s,\"ttc\":%s,\"mode\":\"%s\",\"zone\":\"%s\",\"haz\":\"%s\",\"conf\":%s}",
-    (unsigned long)seqNo++, (unsigned long)now,
-    fmt(b[0], 12, rL, 1), fmt(b[1], 12, rR, 1), fmt(b[2], 12, rng, 1), fmt(b[3], 12, brg, 1),
-    fmt(b[4], 12, x, 1), fmt(b[5], 12, y, 1), fmt(b[6], 12, vel, 0), fmt(b[7], 12, ttc, 1),
-    mode, zone, HAZ[haz], isnan(conf) ? "0" : (conf >= 0.95f ? "1.0" : (conf >= 0.75f ? "0.8" : (conf >= 0.55f ? "0.6" : "0.4"))));
-  Serial.println(line);
+void emitBusy(const char* token) {
+  char line[OUTPUT_CAPACITY];
+  const int n = snprintf(line, sizeof(line),
+      "{\"v\":1,\"type\":\"error\",\"id\":\"%s\",\"boot\":\"%s\",\"code\":\"busy\"}", token, bootId);
+  emitLine(line, n);
 }
 
-// ====================== SERIAL INPUT ======================
+void emitSample() {
+  const uint32_t now = static_cast<uint32_t>(esp_timer_get_time());
+  char leftMm[12], rightMm[12], line[OUTPUT_CAPACITY];
+  if (leftReading.distanceMm < 0) strcpy(leftMm, "null");
+  else snprintf(leftMm, sizeof(leftMm), "%d", leftReading.distanceMm);
+  if (rightReading.distanceMm < 0) strcpy(rightMm, "null");
+  else snprintf(rightMm, sizeof(rightMm), "%d", rightReading.distanceMm);
+  const int n = snprintf(line, sizeof(line),
+      "{\"v\":1,\"type\":\"sample\",\"id\":\"%s\",\"boot\":\"%s\",\"seq\":%lu,"
+      "\"left\":{\"status\":\"%s\",\"distance_mm\":%s,\"age_ms\":%lu},"
+      "\"right\":{\"status\":\"%s\",\"distance_mm\":%s,\"age_ms\":%lu}}",
+      requestId, bootId, static_cast<unsigned long>(sequenceNo++),
+      leftReading.status, leftMm, static_cast<unsigned long>(static_cast<uint32_t>(now - leftReading.observedUs) / 1000),
+      rightReading.status, rightMm, static_cast<unsigned long>(static_cast<uint32_t>(now - rightReading.observedUs) / 1000));
+  emitLine(line, n);
+}
+
+void acceptCommand(const char* line, size_t length) {
+  if (length && line[length - 1] == '\r') --length;  // Accept LF or CRLF.
+  if (length != 19 || (line[0] != 'H' && line[0] != 'R') || line[1] != '1' || line[2] != ' ') return;
+  for (size_t i = 3; i < 19; ++i) {
+    if (!((line[i] >= '0' && line[i] <= '9') || (line[i] >= 'a' && line[i] <= 'f'))) return;
+  }
+  char token[17];
+  memcpy(token, line + 3, 16);
+  token[16] = 0;
+  if (pairPhase != PairPhase::Idle) {
+    emitBusy(token);
+  } else if (line[0] == 'H') {
+    emitHello(token);
+  } else {
+    memcpy(requestId, token, sizeof(requestId));
+    leftReading = Reading{};
+    rightReading = Reading{};
+    pairPhase = PairPhase::WaitLeft;
+  }
+}
+
 void handleSerial() {
-  static char buf[24];
-  static uint8_t n = 0;
-  while (Serial.available()) {
-    char c = (char)Serial.read();
-    if (c == '\n' || c == '\r') {
-      if (n > 1 && (buf[0] == 'T' || buf[0] == 't')) {
-        buf[n] = 0;
-        float t = atof(buf + 1);
-        if (t > -30.0f && t < 60.0f) {
-          gTempC = t;
-          Serial.printf("{\"event\":\"temp\",\"c\":%.1f}\n", gTempC);
-        }
-      }
-      n = 0;
-    } else if (n < sizeof(buf) - 1) {
-      buf[n++] = c;
+  static char command[COMMAND_CAPACITY];
+  static size_t used = 0;
+  static bool discard = false;
+  // Bound serial work per loop so partial/flooded input cannot starve acquisition.
+  for (size_t count = 0; count < COMMAND_CAPACITY && Serial.available(); ++count) {
+    const char c = static_cast<char>(Serial.read());
+    if (c == '\n') {
+      if (!discard) acceptCommand(command, used);
+      used = 0;
+      discard = false;
+    } else if (!discard) {
+      if (used < sizeof(command) - 1) command[used++] = c;
+      else { used = 0; discard = true; }
     }
   }
 }
 
-// ====================== ARDUINO ======================
+void servicePair() {
+  const uint32_t now = static_cast<uint32_t>(esp_timer_get_time());
+  const bool mayTrigger = !haveSlot || static_cast<uint32_t>(now - lastSlotUs) >= TRIGGER_GAP_US;
+  switch (pairPhase) {
+    case PairPhase::Idle: break;
+    case PairPhase::WaitLeft:
+      if (mayTrigger) { startChannel(SL); pairPhase = PairPhase::ReadLeft; }
+      break;
+    case PairPhase::ReadLeft:
+      if (finishChannel(SL, leftReading)) pairPhase = PairPhase::WaitRight;
+      break;
+    case PairPhase::WaitRight:
+      if (mayTrigger) { startChannel(SR); pairPhase = PairPhase::ReadRight; }
+      break;
+    case PairPhase::ReadRight:
+      if (finishChannel(SR, rightReading)) { emitSample(); pairPhase = PairPhase::Idle; }
+      break;
+  }
+}
+
 void setup() {
   Serial.begin(115200);
-  for (Sensor* s : sensors) {
-    pinMode(s->trig, OUTPUT);
-    digitalWrite(s->trig, LOW);
-    pinMode(s->echo, INPUT);
-    attachInterruptArg(digitalPinToInterrupt(s->echo), echoISR, s, CHANGE);
+  snprintf(bootId, sizeof(bootId), "%08lx", static_cast<unsigned long>(esp_random()));
+  Sensor* sensors[2] = { &SL, &SR };
+  for (Sensor* sensor : sensors) {
+    pinMode(sensor->trig, OUTPUT);
+    digitalWrite(sensor->trig, LOW);
+    pinMode(sensor->echo, INPUT);  // GPIO34/35 have no internal pulls.
+    attachInterruptArg(digitalPinToInterrupt(sensor->echo), echoISR, sensor, CHANGE);
   }
-  delay(100);
-  Serial.println("{\"event\":\"boot\",\"fw\":\"glasses_ultrasonic\",\"baseline_cm\":14.0}");
-  slotStart = millis();
 }
 
 void loop() {
   handleSerial();
-
-  uint32_t now = millis();
-  if (now - slotStart < SLOT_MS) return;
-  slotStart = now;
-
-  // Finish the sensor that just had its slot
-  if (activeIdx >= 0) {
-    Sensor& s = *sensors[activeIdx];
-    s.win[s.wi] = readRaw(s);
-    s.wi = (s.wi + 1) % 3;
-    updateTrack(s, median3(s.win), now);
-    if (activeIdx == 1) fuseAndEmit(now);       // after R updates, both are fresh -> emit
-  }
-
-  // Start the next sensor (alternate L, R, L, R ...)
-  activeIdx = (activeIdx + 1) % 2;
-  fire(*sensors[activeIdx]);
+  servicePair();
 }

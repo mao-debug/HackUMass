@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "vidi"
 version = "0.1.0"
-description = "Local camera detection, printed-text reading, and speech for vidi smart glasses"
+description = "Camera scenes, local proximity, printed-text reading, and speech for vidi smart glasses"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -17,6 +17,7 @@ dependencies = [
 desktop = ["numpy>=1.26,<3", "opencv-python>=4.10,<5"]
 # SDK 2.34 retry-option behavior is covered by offline transport tests.
 gemini = ["google-genai==2.34.0"]
+sensors = ["pyserial==3.5"]
 
 [project.scripts]
 vidi = "vidi.main:main"

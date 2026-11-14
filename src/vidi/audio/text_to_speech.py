@@ -11,11 +11,12 @@ import re
 import sys
 import tempfile
 import time
+import threading
 from pathlib import Path
 import wave
 
 from vidi.core.configuration import SpeechSettings
-from vidi.core.local_process import LocalProcessError, run_local_process
+from vidi.core.local_process import LocalProcessCancelled, LocalProcessError, run_local_process
 from vidi.core.types import SpeechResult
 
 
@@ -60,7 +61,8 @@ class LocalSpeech:
         self.settings = settings
         self.backend = backend
 
-    def speak(self, text: str, *, output_path: Path | None = None) -> SpeechResult:
+    def speak(self, text: str, *, output_path: Path | None = None,
+              cancel_event: threading.Event | None = None) -> SpeechResult:
         """Return an observable result; Ctrl+C propagates after local cleanup.
 
         File export uses the selected WAV-capable engine and validates a sibling temporary
@@ -70,7 +72,8 @@ class LocalSpeech:
         if self.backend == "piper":
             from vidi.audio.piper_speech import PiperSpeech
 
-            return PiperSpeech(self.settings).speak(text, output_path=output_path)
+            options = {"cancel_event": cancel_event} if cancel_event is not None else {}
+            return PiperSpeech(self.settings).speak(text, output_path=output_path, **options)
         started = time.monotonic()
         mode = "wav" if output_path is not None else "playback"
         backend = self.backend
@@ -91,6 +94,9 @@ class LocalSpeech:
                 voice=self.settings.voice or {"say": "Samantha", "espeak_ng": "en"}.get(backend),
             )
 
+        if cancel_event is not None and cancel_event.is_set():
+            return result("cancelled")
+
         if backend not in ("espeak_ng", "say"):
             return result("failed", "No supported local speech backend is configured for this platform.")
         if mode == "wav" and backend == "say":
@@ -110,7 +116,8 @@ class LocalSpeech:
                     argv.extend(("-w", str(temporary)))
 
             completed = run_local_process(
-                argv, input_bytes=prepared.encode("utf-8"), timeout_s=self.settings.timeout_s
+                argv, input_bytes=prepared.encode("utf-8"), timeout_s=self.settings.timeout_s,
+                **({"cancel_event": cancel_event} if cancel_event is not None else {}),
             )
             if completed.returncode != 0:
                 return result(
@@ -120,9 +127,13 @@ class LocalSpeech:
                 )
             if temporary is not None:
                 _validate_wav(temporary)
+                if cancel_event is not None and cancel_event.is_set():
+                    return result("cancelled")
                 temporary.replace(destination)
                 temporary = None
             return result("completed")
+        except LocalProcessCancelled:
+            return result("cancelled")
         except LocalProcessError as error:
             return result("failed", f"Local speech could not finish: {error}")
         except (OSError, UnicodeError, wave.Error, EOFError, ValueError):

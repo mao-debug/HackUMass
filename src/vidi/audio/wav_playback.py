@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 import shutil
 import sys
+import threading
 
 from vidi.core.local_process import LocalProcessError, run_local_process
 
@@ -13,7 +14,8 @@ from vidi.core.local_process import LocalProcessError, run_local_process
 _ALLOWED_PLAYERS = {"paplay", "pw-play", "afplay", "aplay"}
 
 
-def play_wav(path: Path, *, timeout_s: float, player: str | None = None) -> str:
+def play_wav(path: Path, *, timeout_s: float, player: str | None = None,
+             cancel_event: threading.Event | None = None) -> str:
     """Play once, returning the player name; never retry or change audio routes.
 
     Automatic selection tries paplay then pw-play on Linux, or afplay on Mac.
@@ -56,7 +58,10 @@ def play_wav(path: Path, *, timeout_s: float, player: str | None = None) -> str:
         raise LocalProcessError("The installed WAV player could not be located.") from None
     if selected is None:
         raise LocalProcessError("No selected WAV player is installed. Check the available local audio tools.")
-    completed = run_local_process([executable, str(resolved)], input_bytes=b"", timeout_s=timeout_s)
+    completed = run_local_process(
+        [executable, str(resolved)], input_bytes=b"", timeout_s=timeout_s,
+        **({"cancel_event": cancel_event} if cancel_event is not None else {}),
+    )
     if completed.returncode != 0:
         raise LocalProcessError("WAV playback failed. Check the selected player and audio output device.")
     return selected

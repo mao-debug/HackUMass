@@ -54,6 +54,15 @@ class SimulationResult:
     interrupted: bool = False
 
 
+@dataclass(frozen=True)
+class SceneProximityResult(SimulationResult):
+    """Explicit Phase 4 additions, without changing older report schemas."""
+
+    proximity: dict | None = None
+    proximity_feedback: str | None = None
+    proximity_status: str = "pending"
+
+
 def _open_source(settings: AppSettings):
     if settings.camera.source == "picamera2":
         from vidi.camera.picamera2 import Picamera2Capture
@@ -106,6 +115,8 @@ def run_simulation(
     continuous: bool = False,
     gemini_live: bool = False,
     gemini_read: bool = False,
+    scene_live: bool = False,
+    proximity: bool = False,
 ) -> SimulationResult:
     """Run selected backends; cloud actions require an explicit per-run flag.
 
@@ -115,6 +126,7 @@ def run_simulation(
     validate_runtime_settings(
         settings, describe=describe, read_text=read_text, speak=speak, speech_output=speech_output,
         gemini_detect=gemini_detect, continuous=continuous, gemini_live=gemini_live, gemini_read=gemini_read,
+        scene_live=scene_live, proximity=proximity,
     )
     backend = settings.models.object_detection_backend or "none"
     preview = settings.simulation.preview
@@ -126,6 +138,12 @@ def run_simulation(
         os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
     ):
         raise SimulationError("Preview needs a desktop display. Run with --no-preview instead.")
+
+    if scene_live:
+        from vidi.core.phase4 import run_phase4_live
+
+        return run_phase4_live(settings, proximity=proximity, speak=speak,
+                               open_source=_open_source, question=question)
 
     detector = None
     if backend == "fixture":
@@ -254,7 +272,8 @@ def run_simulation(
 
     description = description_error = description_model = description_elapsed_s = None
     description_status = "not_requested"
-    result = SimulationResult(
+    result_type = SceneProximityResult if proximity else SimulationResult
+    result = result_type(
         count, last_packet.image_bgr.shape[1], last_packet.image_bgr.shape[0], output,
         backend=backend, simulated=backend == "fixture", ready_frames=ready,
         not_ready_frames=not_ready,
@@ -285,6 +304,8 @@ def run_simulation(
             "inference_ready_fps": _observed_rate(ready, first_ready_ns, last_ready_ns),
             "last_inference_status": last_detection.status if last_detection is not None else "disabled",
         })
+        if proximity:
+            report.update({"schema_version": 3, "mode": "phase4_scene_snapshot"})
         if continuous:
             report.update({
                 "continuous": True,
@@ -430,8 +451,52 @@ def run_simulation(
             print("No readable text found.", flush=True)
         else:
             logger.error("Text reading failed: %s", ocr.error or "OCR unavailable.")
+    sensor_snapshot = None
+    if proximity:
+        from vidi.core.phase4 import compose_feedback
+        from vidi.sensors.proximity import (
+            ProximityMonitor, format_proximity, refresh_snapshot, unknown_snapshot,
+        )
+
+        checkpoint_ns = time.monotonic_ns()
+        try:
+            with ProximityMonitor(settings.proximity) as monitor:
+                sensor_snapshot = monitor.fresh(
+                    after_ns=checkpoint_ns,
+                    timeout_s=settings.proximity.startup_timeout_s + 0.75,
+                )
+        except KeyboardInterrupt:
+            result = replace(result, proximity_status="cancelled")
+            persist_interruption(result)
+            raise
+        except Exception:
+            sensor_snapshot = unknown_snapshot(error="Local proximity is unavailable.")
+        # Shutdown and checkpoint I/O can consume the freshness budget too.
+        sensor_snapshot = refresh_snapshot(sensor_snapshot, settings.proximity.stale_after_s)
+        proximity_feedback = format_proximity(sensor_snapshot, settings.proximity.nearby_mm)
+        result = replace(
+            result, proximity=sensor_snapshot.to_dict(), proximity_feedback=proximity_feedback,
+            proximity_status="ready" if any(item.status == "ok" for item in sensor_snapshot.observations) else "unavailable",
+        )
+        print(proximity_feedback, flush=True)
+        persist(result)
+
     requested_speech = speak or speech_output is not None
     if requested_speech:
+        if proximity:
+            sensor_snapshot = refresh_snapshot(sensor_snapshot, settings.proximity.stale_after_s)
+            proximity_feedback = format_proximity(sensor_snapshot, settings.proximity.nearby_mm)
+            if result.description_status != "ready":
+                proximity_feedback += " Scene description unavailable."
+            speech_input = compose_feedback(
+                result.description, proximity_feedback,
+                max(0.0, (time.monotonic_ns() - last_packet.captured_monotonic_ns) / 1e9),
+                settings.speech.max_words,
+            )
+            result = replace(
+                result, proximity=sensor_snapshot.to_dict(), proximity_feedback=proximity_feedback,
+                proximity_status="ready" if any(item.status == "ok" for item in sensor_snapshot.observations) else "unavailable",
+            )
         pending = SpeechResult(
             status="pending" if speech_input is not None else speech_skip,
             mode="wav" if speech_output is not None else "playback", output_path=speech_output,
@@ -439,6 +504,22 @@ def run_simulation(
         result = replace(result, speech=pending)
         persist(result)
         if speech_input is not None:
+            if proximity:
+                # A slow checkpoint must not turn a formerly fresh return into
+                # an apparently current observation at the audio boundary.
+                sensor_snapshot = refresh_snapshot(sensor_snapshot, settings.proximity.stale_after_s)
+                proximity_feedback = format_proximity(sensor_snapshot, settings.proximity.nearby_mm)
+                if result.description_status != "ready":
+                    proximity_feedback += " Scene description unavailable."
+                speech_input = compose_feedback(
+                    result.description, proximity_feedback,
+                    max(0.0, (time.monotonic_ns() - last_packet.captured_monotonic_ns) / 1e9),
+                    settings.speech.max_words,
+                )
+                result = replace(
+                    result, proximity=sensor_snapshot.to_dict(), proximity_feedback=proximity_feedback,
+                    proximity_status="ready" if any(item.status == "ok" for item in sensor_snapshot.observations) else "unavailable",
+                )
             from vidi.audio.text_to_speech import LocalSpeech
 
             speech_started = time.monotonic()
