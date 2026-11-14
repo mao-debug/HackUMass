@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import cv2
 import pytest
@@ -210,3 +212,25 @@ def test_keyboard_interrupt_returns_130_without_traceback(monkeypatch, caplog):
     assert main([]) == 130
     assert "Simulation stopped by the user" in caplog.text
     assert "Traceback" not in caplog.text
+
+
+@pytest.mark.parametrize("interrupted, expected_status", [(False, 0), (True, 130)])
+def test_continuous_cli_runs_until_controller_stops(monkeypatch, interrupted, expected_status):
+    run = Mock(return_value=SimpleNamespace(interrupted=interrupted))
+    monkeypatch.setattr(controller, "run_simulation", run)
+
+    assert main(["--continuous"]) == expected_status
+    assert run.call_args.kwargs == {"continuous": True}
+
+
+@pytest.mark.parametrize("arguments", [
+    ["--max-frames", "20"], ["--gemini-detect"], ["--describe"],
+    ["--read-text"], ["--speak"], ["--speech-output", "speech.wav"],
+])
+def test_continuous_rejects_snapshot_actions_before_camera_or_credentials(monkeypatch, arguments):
+    run = Mock()
+    monkeypatch.setattr(controller, "run_simulation", run)
+    monkeypatch.setattr("vidi.main.saved_gemini_key", lambda: pytest.fail("Saved key accessed"))
+
+    assert main(["--continuous"] + arguments) == 1
+    run.assert_not_called()

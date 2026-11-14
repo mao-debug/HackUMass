@@ -26,6 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--image", type=Path, help="Image path (selects image unless --source is given)")
     parser.add_argument("--camera-index", type=int, help="Webcam index (selects webcam unless --source is given)")
     parser.add_argument("--max-frames", type=int, help="Positive frame limit (default: 1)")
+    parser.add_argument("--continuous", action="store_true", help="Keep local camera capture and detection running until q/Esc or Ctrl+C")
     parser.add_argument("--preview", action=argparse.BooleanOptionalAction, default=None,
                         help="Open a local preview window; requires a desktop display")
     parser.add_argument("--output", type=Path, help="Save the last frame to a local image path")
@@ -69,6 +70,8 @@ def main(argv: list[str] | None = None) -> int:
             save_gemini_key()
             print("Gemini key saved locally. Omit --prompt-key on future Gemini runs.")
             return 0
+        if args.continuous and args.max_frames is not None:
+            raise ConfigurationError("Choose --continuous or --max-frames; continuous mode runs until stopped.")
         settings = load_settings(args.config)
         camera_changes = {}
         if args.image is not None and args.camera_index is not None:
@@ -134,6 +137,7 @@ def main(argv: list[str] | None = None) -> int:
         validate_runtime_settings(
             settings, describe=args.describe, read_text=args.read_text,
             speak=args.speak, speech_output=speech_output, gemini_detect=args.gemini_detect,
+            continuous=args.continuous,
         )
         if args.prompt_key and not (args.gemini_detect or args.describe):
             raise ConfigurationError("--prompt-key requires --gemini-detect or --describe.")
@@ -166,7 +170,9 @@ def main(argv: list[str] | None = None) -> int:
                     if result.description_status != "ready" or result.speech.status == "failed":
                         return 1
                 else:
-                    result = run_simulation(settings)
+                    result = run_simulation(settings, continuous=True) if args.continuous else run_simulation(settings)
+                    if args.continuous and result.interrupted:
+                        return 130
                 if (settings.models.object_detection_backend or "none") != "none" and result.ready_frames == 0:
                     logging.getLogger(__name__).error(
                         "No inference results arrived during this run. Check model startup and camera diagnostics; "

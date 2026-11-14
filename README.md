@@ -81,7 +81,10 @@ decoder instead accepts its specific baseline `.rpk` and model-aligned
 `--threshold` for local-model confidence filtering and `--max-detections` to
 limit results. Gemini labels have no SSD class ID or comparable confidence score.
 
-`--max-frames` sets a positive frame limit. `--preview`/`--no-preview` control
+`--max-frames` sets a positive frame limit. `--continuous` instead keeps local
+camera capture and detection running until you stop it; it ignores the YAML
+frame limit and cannot be combined with `--max-frames`.
+`--preview`/`--no-preview` control
 the desktop window. **q** or **Escape** finishes capture; requested reading/cloud
 actions then process the final frame. **Ctrl+C** cancels the run. `--output PATH`
 saves the final frame, with overlays when detection is enabled, while
@@ -89,6 +92,29 @@ saves the final frame, with overlays when detection is enabled, while
 Both are explicit local exports. Generated files belong in ignored
 `artifacts/`; use `.png` for an image export. `--log-level DEBUG` enables more
 logging. A fixture report is explicitly marked simulated.
+
+For a continuous **offline** view on the Pi's connected desktop, use the
+already downloaded MobileNet-SSD model and the existing Pi environment:
+
+```sh
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi.yaml --continuous --preview --output artifacts/pi-live-last.png --report artifacts/pi-live-local.json
+```
+
+The camera stays open and boxes update on each processed frame. Press **q** or
+**Esc** in the preview to finish, or **Ctrl+C** in the terminal. Final image and
+report exports are written after stopping, including a normal Ctrl+C stop.
+Use `--no-preview` when no desktop display is available. This is a live feed;
+it does not write a video file. Continuous reports retain the latest 120 frame
+records plus totals for the full run, so history does not grow indefinitely.
+The existing Pi profile requests a 2 FPS processing limit; actual throughput
+depends on the Pi and model.
+This command uses MobileNet-SSD's 20 VOC classes, including people, chairs, and
+some vehicles; it does not detect doors or signs. It uses the local model rather
+than Gemini's broader generated labels.
+
+Continuous mode currently supports local capture/detection. Gemini, OCR, and
+speech remain separate explicit snapshot actions. The live view makes no
+network requests and does not read a saved Gemini key.
 
 ## Raspberry Pi setup and acceptance
 

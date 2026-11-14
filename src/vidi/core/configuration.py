@@ -269,9 +269,12 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
 def validate_runtime_settings(
     settings: AppSettings, *, describe: bool = False, read_text: bool = False,
     speak: bool = False, speech_output: Path | None = None, gemini_detect: bool = False,
+    continuous: bool = False,
 ) -> None:
     """Check backend combinations after command-line overrides are applied."""
     backend = settings.models.object_detection_backend or "none"
+    if continuous and (describe or read_text or gemini_detect or speak or speech_output is not None or backend == "gemini"):
+        raise ConfigurationError("--continuous currently supports local camera/detection only; snapshot reading, cloud, and speech actions require a separate run.")
     if (speak or speech_output is not None) and not (read_text or describe or gemini_detect):
         raise ConfigurationError("Speech requires --read-text, --describe, or --gemini-detect.")
     if speak and speech_output is not None:

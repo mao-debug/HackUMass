@@ -6,6 +6,13 @@ one final unannotated image only after the camera closes. Increasing
 `--max-frames` does not create additional uploads. No local detection weights,
 Tesseract, microphone, or Gemini speech-generation API is needed.
 
+For a continuously updating camera view with local identification, use
+`--config config/pi.yaml --continuous --preview` with the installed local
+MobileNet-SSD model. Gemini currently remains a one-snapshot action and cannot
+be combined with `--continuous`. A repeating cloud mode would send repeated
+images to Google and requires separate approval. See the continuous local
+command in [README.md](../README.md).
+
 The detection path is implemented and checked with offline tests. Approval covers
 the pinned Pi SDK and required dependencies from PyPI in `.venv-pi`, plus
 user-triggered non-sensitive test snapshots through a verified free-tier

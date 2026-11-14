@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ from vidi.core.types import Detection, DetectionResult, FramePacket, OcrResult, 
 
 logger = logging.getLogger(__name__)
 WINDOW_TITLE = "vidi (q/Esc to exit)"
+CONTINUOUS_RECORD_LIMIT = 120
 
 
 class SimulationError(RuntimeError):
@@ -49,6 +51,7 @@ class SimulationResult:
     ocr: OcrResult = field(default_factory=OcrResult)
     speech: SpeechResult = field(default_factory=SpeechResult)
     last_inference: DetectionResult | None = None
+    interrupted: bool = False
 
 
 def _open_source(settings: AppSettings):
@@ -100,6 +103,7 @@ def run_simulation(
     settings: AppSettings, *, describe: bool = False, question: str = "What is in front of me?",
     read_text: bool = False, speak: bool = False, speech_output: Path | None = None,
     gemini_detect: bool = False,
+    continuous: bool = False,
 ) -> SimulationResult:
     """Run selected backends; cloud actions require an explicit per-run flag.
 
@@ -108,7 +112,7 @@ def run_simulation(
     """
     validate_runtime_settings(
         settings, describe=describe, read_text=read_text, speak=speak, speech_output=speech_output,
-        gemini_detect=gemini_detect,
+        gemini_detect=gemini_detect, continuous=continuous,
     )
     backend = settings.models.object_detection_backend or "none"
     preview = settings.simulation.preview
@@ -134,63 +138,82 @@ def run_simulation(
     count = ready = not_ready = 0
     last_packet = last_detection = None
     first_frame_ns = first_ready_ns = last_ready_ns = None
-    records = []
+    records = deque(maxlen=CONTINUOUS_RECORD_LIMIT) if continuous else []
+    interrupted = False
     startup_started = time.monotonic()
     processing_started = startup_started
     try:
         with _open_source(settings) as capture:
             processing_started = time.monotonic()
-            for _ in range(settings.simulation.max_frames):
-                started = time.monotonic()
-                if settings.camera.source in ("picamera2", "imx500"):
-                    packet = capture.read_packet()
-                else:
-                    frame = capture.read()
-                    packet = None if frame is None else FramePacket(count + 1, time.monotonic_ns(), frame)
-                if packet is None:
-                    raise CaptureError(
-                        f"Frame source stopped delivering frames after {count} frame(s). "
-                        "Check the camera or run with --source sample."
-                    )
-                count += 1
-                if first_frame_ns is None:
-                    first_frame_ns = packet.captured_monotonic_ns
-                result = detector.detect(packet) if detector is not None else packet.inference
-                if backend == "imx500" and result is None:
-                    result = DetectionResult(packet.frame_id, backend, "not_ready")
-                if result is not None and result.frame_id != packet.frame_id:
-                    from vidi.ai.object_detection import DetectionError
+            if continuous:
+                logger.info(
+                    "Continuous local mode active: source=%s, detector=%s. %s",
+                    settings.camera.source, backend,
+                    "Press q/Esc in the preview or Ctrl+C to stop." if preview else "Press Ctrl+C to stop.",
+                )
+            try:
+                while continuous or count < settings.simulation.max_frames:
+                    started = time.monotonic()
+                    if settings.camera.source in ("picamera2", "imx500"):
+                        packet = capture.read_packet()
+                    else:
+                        frame = capture.read()
+                        packet = None if frame is None else FramePacket(count + 1, time.monotonic_ns(), frame)
+                    if packet is None:
+                        raise CaptureError(
+                            f"Frame source stopped delivering frames after {count} frame(s). "
+                            "Check the camera or run with --source sample."
+                        )
+                    result = detector.detect(packet) if detector is not None else packet.inference
+                    if backend == "imx500" and result is None:
+                        result = DetectionResult(packet.frame_id, backend, "not_ready")
+                    if result is not None and result.frame_id != packet.frame_id:
+                        from vidi.ai.object_detection import DetectionError
 
-                    raise DetectionError("Inference metadata belongs to a different frame.")
-                if result is not None:
-                    ready += result.status == "ready"
-                    not_ready += result.status == "not_ready"
-                    if result.status == "ready":
-                        if first_ready_ns is None:
-                            first_ready_ns = packet.captured_monotonic_ns
-                        last_ready_ns = packet.captured_monotonic_ns
-                last_packet, last_detection = packet, result
-                if settings.simulation.report_path is not None:
-                    records.append({
-                        "frame_id": packet.frame_id,
-                        "captured_monotonic_ns": packet.captured_monotonic_ns,
-                        "width": packet.image_bgr.shape[1],
-                        "height": packet.image_bgr.shape[0],
-                        "inference": asdict(result) if result is not None else None,
-                    })
-                logger.debug("Frame %d: %dx%d", count, packet.image_bgr.shape[1], packet.image_bgr.shape[0])
-                if preview:
-                    display = packet.image_bgr
+                        raise DetectionError("Inference metadata belongs to a different frame.")
+                    # Commit only completed frame/result pairs. An interruption
+                    # during inference must not mix a new count with old boxes.
+                    count += 1
+                    if first_frame_ns is None:
+                        first_frame_ns = packet.captured_monotonic_ns
                     if result is not None:
-                        from vidi.ai.object_detection import render_detections
+                        ready += result.status == "ready"
+                        not_ready += result.status == "not_ready"
+                        if result.status == "ready":
+                            if first_ready_ns is None:
+                                first_ready_ns = packet.captured_monotonic_ns
+                            last_ready_ns = packet.captured_monotonic_ns
+                    last_packet, last_detection = packet, result
+                    if settings.simulation.report_path is not None:
+                        records.append({
+                            "frame_id": packet.frame_id,
+                            "captured_monotonic_ns": packet.captured_monotonic_ns,
+                            "width": packet.image_bgr.shape[1],
+                            "height": packet.image_bgr.shape[0],
+                            "inference": asdict(result) if result is not None else None,
+                        })
+                    logger.debug("Frame %d: %dx%d", count, packet.image_bgr.shape[1], packet.image_bgr.shape[0])
+                    if preview:
+                        display = packet.image_bgr
+                        if result is not None:
+                            from vidi.ai.object_detection import render_detections
 
-                        display = render_detections(display, result)
-                    cv2.imshow(capture_title, display)
-                    if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
-                        break
-                if count < settings.simulation.max_frames:
-                    time.sleep(max(0.0, 1.0 / settings.camera.fps - (time.monotonic() - started)))
-            processing_ended = time.monotonic()
+                            display = render_detections(display, result)
+                        cv2.imshow(capture_title, display)
+                        if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
+                            break
+                    if continuous or count < settings.simulation.max_frames:
+                        time.sleep(max(0.0, 1.0 / settings.camera.fps - (time.monotonic() - started)))
+            except KeyboardInterrupt:
+                if not continuous or last_packet is None:
+                    raise
+                interrupted = True
+            finally:
+                processing_ended = time.monotonic()
+    except KeyboardInterrupt:
+        if not continuous or last_packet is None:
+            raise
+        interrupted = True
     except cv2.error as exc:
         raise SimulationError(f"OpenCV preview failed; try --no-preview. Details: {exc}") from exc
     finally:
@@ -210,7 +233,13 @@ def run_simulation(
             from vidi.ai.object_detection import render_detections
 
             image = render_detections(image, last_detection)
-        _save_image(output, image)
+        try:
+            _save_image(output, image)
+        except SimulationError as exc:
+            if not interrupted:
+                raise
+            logger.error("%s. The continuous run was interrupted.", exc)
+            output = None
 
     description = description_error = description_model = description_elapsed_s = None
     description_status = "not_requested"
@@ -224,10 +253,15 @@ def run_simulation(
         description_status=description_status, description_error=description_error,
         description_model=description_model, description_elapsed_s=description_elapsed_s,
         last_inference=last_detection,
+        interrupted=interrupted,
     )
+
+    report_saved = False
 
     def persist(current: SimulationResult) -> None:
         """Checkpoint OCR before audio starts, then publish its final outcome."""
+        nonlocal report_saved
+        report_saved = False
         if current.report_path is None:
             return
         report = asdict(current)
@@ -235,12 +269,20 @@ def run_simulation(
         report["report_path"] = str(current.report_path)
         report["speech"]["output_path"] = str(current.speech.output_path) if current.speech.output_path is not None else None
         report.update({
-            "schema_version": 1, "source": settings.camera.source, "frames": records,
+            "schema_version": 1, "source": settings.camera.source, "frames": list(records),
             "capture_fps": _observed_rate(count, first_frame_ns, last_packet.captured_monotonic_ns),
             "inference_ready_fps": _observed_rate(ready, first_ready_ns, last_ready_ns),
             "last_inference_status": last_detection.status if last_detection is not None else "disabled",
         })
+        if continuous:
+            report.update({
+                "continuous": True,
+                "frame_records_limit": CONTINUOUS_RECORD_LIMIT,
+                "frame_records_truncated": count > len(records),
+                "frame_records_dropped": count - len(records),
+            })
         _save_report(current.report_path, report)
+        report_saved = True
 
     def persist_interruption(current: SimulationResult) -> None:
         """A checkpoint failure must not replace the user's Ctrl+C outcome."""
@@ -393,7 +435,10 @@ def run_simulation(
             else:
                 logger.info("Speech engine completed; physical audibility needs a connected output device.")
 
-    persist(result)
+    if interrupted:
+        persist_interruption(result)
+    else:
+        persist(result)
 
     if read_text:
         logger.info("Local text reading completed: OCR=%s, speech=%s.", result.ocr.status, result.speech.status)
@@ -413,7 +458,7 @@ def run_simulation(
         )
     if output is not None:
         logger.info("Last frame saved to %s", output)
-    if result.report_path is not None:
+    if result.report_path is not None and report_saved:
         logger.info("Run report saved to %s", result.report_path)
     return result
 
