@@ -7,14 +7,36 @@ interface is a keyboard: descriptions and audio are on request. Microphone
 commands remain Phase 5; wearable deployment, portable runtime, and sustained
 power/cooling optimization remain Phase 6.
 
-The existing Pi 5 capture, Gemini live detection, and Gemini OCR with audible
-eSpeak output have supplied acceptance evidence in [hardware.md](hardware.md).
-Those results do not validate the new ultrasonic workflow. Photos show an
-ESP32 board, USB connection, and pin labels, but do not establish resistor
-values, echo voltage, acoustic accuracy, or power quality. **Physical Phase 4
-sensor, scene/audio, and performance acceptance are still pending.**
+The user has confirmed the combined Pi 5 camera, requested Gemini description,
+local sensors, and spoken feedback worked smoothly and was audible. USB logs
+also show both channels becoming unavailable on disconnect and readings
+resuming afterward. The user accepted these functional checks as enough to
+continue development and explicitly deferred further hardware testing and
+upgrades to **Phase 6**. The detailed evidence is in [hardware.md](hardware.md).
+These results do not certify measured distance accuracy, acoustic coverage,
+wiring resistance/voltage, power quality, or sustained performance.
+
+## Recorded functional evidence
+
+| Check | Supplied evidence and limits |
+| --- | --- |
+| USB identification | CP2102N USB bridge at `/dev/ttyUSB0`; this identifies the bridge, not the exact ESP32 board model |
+| Protocol-v1 acquisition | Real paired samples at sequences 0–2, both channels `status: ok`; protocol-compatible device operation demonstrated |
+| Combined camera/scene/sensors/audio | User confirmed hearing feedback and seeing a smooth preview; no sustained FPS comparison or measured recognition accuracy supplied |
+| USB disconnect/recovery | Subsequent live logs showed both channels unavailable, then readings resumed; audible fault feedback was not separately confirmed |
+| Movement checks | Two pasted excerpts of 15 paired records each; user reported moving and estimating the distance by eye |
+| Requested 50 cm bench | A stationary measured 50 cm reference and complete 50-sample accuracy trial were not validated; excerpts are functional movement checks |
+
+Photos establish the USB board/connection and pin labels, but not divider
+resistor values, actual echo voltage, or power quality. The functional result
+is sufficient for the user's requested move to Phase 5; remaining measured
+checks below are deferred rather than represented as passed.
 
 ## Prepare the existing installation
+
+The setup commands below are retained for reproducing or recovering the
+workflow. The current user-run Pi workflow is functional; further upgrades
+are deferred to Phase 6.
 
 First fetch and select the published Phase 4 branch on the Pi:
 
@@ -39,7 +61,8 @@ PYTHONNOUSERSITE=1 .venv-pi/bin/python scripts/check_sensors.py --list
 
 Listing discovers port metadata without opening a device, taking a camera
 image, playing audio, or contacting Gemini. Use the actual port from that
-output; `/dev/ttyUSB0` in the commands below is only an example. A stable
+output; `/dev/ttyUSB0` is the user's observed port, but it can change after
+reconnection. A stable
 `/dev/serial/by-id/` path can be used when available. No automatic port
 selection or scan-and-open behavior is used. Close Arduino Serial Monitor
 before another program uses the same port. Report access errors before changing
@@ -56,15 +79,18 @@ The actual target cross-compile passed with **Arduino CLI 1.6.0** and
 4 MB flash, PSRAM disabled, upload speed 115200, and all warnings enabled.
 The clean rebuild completed with no warnings and used **276476 program bytes
 (21%)** and **22788 static RAM bytes (6%)**. This is a compiler
-result, not a board upload, wiring test, or physical sensor pass. No GPIO or
-serial device was opened.
+result, not a board upload, wiring test, or physical sensor pass. The compile
+itself opened no GPIO or serial device; subsequent user-run protocol and
+combined-operation evidence is recorded above.
 
 The approved tools/config remain under ignored `artifacts/tools/arduino/`;
 intermediates are in `artifacts/firmware-build/` and local-only binaries in
 `artifacts/firmware/`, including `esp32code.ino.bin`. No generated firmware
 binary is committed. The firmware README records the exact FQBN and command.
 
-The old streaming firmware is incompatible: it emits fused coordinates,
+The user's decoded samples demonstrate protocol-v1-compatible firmware is now
+running; a separate upload log was not supplied. The old streaming firmware
+is incompatible: it emits fused coordinates,
 TTC/confidence, and a `clear` hazard when readings are absent. The host rejects
 that legacy stream instead of treating it as a working protocol-v1 sensor.
 
@@ -190,10 +216,16 @@ Speech completion alone does not prove audibility. Existing OCR/read-aloud and
 repeated Gemini detection commands keep their separate opt-ins and profiles.
 Piper/model downloads remain subject to their pending separate approval.
 
-## Controlled Phase 4 bench still to run
+## Measured checks deferred to Phase 6
 
-1. Record the actual ESP32 board/core/build/upload, divider values and echo
-   voltage, USB path, firmware handshake, and physical left/right placement.
+At the user's explicit request, the following remaining checks and hardware
+upgrades are deferred to Phase 6 optimization. They are not a prerequisite
+for continuing the software phases. The numerical criteria are provisional
+bench targets, not results from the movement excerpts.
+
+1. Complete the exact ESP32 board/upload record, measured divider values and
+   echo voltage, supply quality, and physical left/right placement. Retain the
+   already recorded target compile, USB identity, and protocol samples.
 2. Test one sensor at a time, then both together, with a large flat stationary
    target at **0.5, 0.8, 1.2, and 1.5 m**. Collect **50 attempts per position
    per channel**. Record reference distance, valid-return fraction, median
@@ -201,9 +233,10 @@ Piper/model downloads remain subject to their pending separate approval.
    Initial bench targets are **at least 90% valid** and **median absolute error
    at most 10 cm** in those controlled scenes; these are not measured results
    or real-world coverage guarantees.
-3. Remove or move the target closer suddenly; test a missing sensor, unplugged
-   USB, reconnect/reboot, invalid protocol, and stale data. Unknown must never
-   become clearance; a stale channel must expire within the 0.5-second policy.
+3. Extend the observed USB disconnect/recovery check with timed stale expiry,
+   independent sensor faults, reconnect/reboot, and invalid protocol. Unknown
+   must never become clearance; a stale channel must expire within the
+   0.5-second policy. Fault-message audibility remains a separate check.
 4. Capture a fresh camera-only baseline, then repeat with proximity, requested
    D, and optional speech under the same settings. Aim to retain **at least
    80% of baseline preview FPS**, with no blocking UI or accumulating queues.
@@ -216,8 +249,9 @@ Six native firmware tests passed by compiling the actual sketch against
 temporary local SDK stubs; host tests use simulated serial/camera/cloud/audio
 boundaries. They cannot verify dual-core ISR timing, IRAM placement, wiring, acoustic crosstalk,
 accuracy, or physical playback. The successful ESP32 cross-compile is recorded
-separately above; flashing and physical bench checks remain pending. Stop
-directional/nearby performance claims if identity, freshness,
-failure handling, or the controlled target checks fail. Battery runtime,
-wearable mounting, sustained power/thermal optimization, and field evaluation
-remain Phase 6; no mobility or navigation-safety guarantee is made.
+separately above, and the functional Pi checks are recorded separately from
+measured accuracy. A separate upload log and the deferred electrical/acoustic
+bench remain unrecorded. Directional/nearby performance claims require that
+later evidence. Battery runtime, wearable mounting, sustained power/thermal
+optimization, and field evaluation remain Phase 6; no mobility or
+navigation-safety guarantee is made.

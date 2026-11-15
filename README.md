@@ -8,9 +8,13 @@ The separate IMX500 AI Camera backend remains optional for that different
 sensor. macOS supports fixture replay. Explicit one-shot Gemini object detection
 and scene descriptions are optional cloud demonstrations. Phase 3 adds Gemini
 or local OCR and a short local speech response or WAV export. Gemini OCR and
-audible speech have passed a user-run Pi 5 check. Voice commands remain deferred.
+audible speech have passed a user-run Pi 5 check.
 Phase 4 adds requested scene descriptions and independent left/right ultrasonic
-feedback over an ESP32 USB link. Its new physical sensor bench remains pending.
+feedback over an ESP32 USB link; the user confirmed smooth combined operation
+and audible feedback. Phase 5 adds requested short voice commands; local
+Bluetooth capture/playback passed, while Gemini command routing remains
+pending on the Pi. Further measured hardware checks and
+upgrades are deferred to Phase 6 at the user's request.
 
 The default run processes one synthetic sample frame with detection disabled.
 It opens no camera or preview, loads no model, makes no network request, and
@@ -187,9 +191,58 @@ updated conditions throughout the utterance. Existing Gemini live detection
 and OCR/read-aloud remain separate commands.
 
 [docs/phase4.md](docs/phase4.md) contains setup, failure behavior, protocol,
-simulation, and the controlled sensor bench. Photos establish the board/USB
-connection and pin labels; resistor values, actual accuracy, and Phase 4 Pi
-acceptance have not been measured. Optional Piper downloads remain pending.
+simulation, and the deferred controlled sensor bench. Real paired samples and
+combined camera/Gemini/sensor/audio operation were supplied; USB logs showed
+unavailable readings on disconnect and recovery afterward. Distance accuracy,
+resistor/echo voltage, supply quality, and sustained performance were not
+validated and are deferred to Phase 6. Optional Piper downloads remain pending.
+
+## Phase 5: requested voice commands
+
+The new `--voice-commands` flag requires `--scene-live --continuous --preview`. **M**
+records one clip of at most five seconds and sends it to Gemini transcription;
+a local English allowlist selects describe, read text, proximity, stop, or help.
+There is no continuous listening or wake word. The user approved these short
+audio uploads using the existing SDK/key and free-tier scope; no new Python
+packages are required. The user recorded a requested five-second clip through
+the Pi's Bluetooth microphone and heard their recorded voice through playback.
+Local capture/playback passed; Gemini command recognition/routing remains
+pending on the Pi.
+
+Select the headset as the desktop microphone input, then use the existing Pi
+environment and observed ESP32 port:
+
+```sh
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-phase5.yaml --continuous --scene-live --preview --voice-commands --proximity --sensor-port /dev/ttyUSB0 --speak --report artifacts/phase5.json
+```
+
+In the focused window, **M** starts one command clip; **T** requests Gemini
+printed-text reading; **H** gives local help. **D/P/S/R/q/Esc** keep their scene,
+proximity, stop, rearm, and quit controls. Playback and help honor `--speak`.
+Say “What's in front of me?”, “Read this sign,” “Check proximity,” “Stop
+speaking,” or “Help” after M. A spoken stop requires recording/transcription;
+use **S or q/Esc** for immediate local cancellation. Busy commands are not
+queued. A recognized camera action waits for the shared five-second cloud
+cooldown after transcription before making its separate image request.
+
+Voice transcription and D/T require network access. Keyboard **P/H/S** remain
+local; starting the window does not record or upload audio. Audio clips and raw
+transcripts are not saved in reports; canonical actions/status/model/timing
+are recorded alongside requested scene/OCR/proximity results.
+
+For Mac development with synthetic pixels and proximity fixtures, supply your
+own PCM16 WAV, mono/stereo, 8–48 kHz, at most five seconds:
+
+```sh
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv/bin/python -m vidi --config config/phase5-sim.yaml --continuous --scene-live --preview --voice-commands --proximity --command-audio /path/to/your-command.wav --report artifacts/phase5-sim.json
+```
+
+Replace the WAV path; each M sends that explicit clip for transcription.
+Optional `--speak` uses native Mac `say`. The default Pi capture device is
+literal ALSA `pulse`; `--microphone-device` can override it and cannot be paired
+with WAV replay. Detailed input selection, command limits, failures, and
+pending microphone checks are in [docs/phase5.md](docs/phase5.md).
+The dedicated higher-resolution Phase 3 OCR snapshot profile remains available.
 
 ## Raspberry Pi setup and acceptance
 
@@ -426,7 +479,7 @@ approved non-sensitive image upload.
 [config/pi-gemini.yaml](config/pi-gemini.yaml) selects the opt-in cloud snapshot,
 and [config/pi-imx500.yaml](config/pi-imx500.yaml) is the optional AI Camera profile.
 The `camera`,
-`simulation`, `detection`, `models`, `ocr`, `speech`, `cloud`, and `proximity` sections configure their
+`simulation`, `detection`, `models`, `ocr`, `speech`, `cloud`, `proximity`, and `voice` sections configure their
 respective boundaries. Unknown keys and invalid values fail clearly. The
 `models.object_detection_backend`, `object_detection_path`, and
 `object_detection_config_path` settings select local detection assets.
@@ -472,8 +525,9 @@ owns capture, `ai/object_detection.py` owns detection results and replay,
 `ai/text_recognition.py` owns local OCR, `audio/text_to_speech.py` owns optional
 speech, `ai/scene_description.py` owns the cloud boundary, and `core/` owns
 configuration and the bounded controller. `main.py` and `__main__.py` expose the
-CLI. Speech recognition and the voice assistant remain later-phase
-scaffolding. `config/`, `examples/`, `scripts/`, `tests/`, and `docs/` hold
+CLI. `audio/speech_to_text.py` owns explicitly requested short command capture/
+transcription; `assistant/command_handler.py` matches a local command allowlist.
+`config/`, `examples/`, `scripts/`, `tests/`, and `docs/` hold
 configuration, fixtures, diagnostics, verification, and setup notes.
 
 Phase 1 established the foundation. Phase 2 covers camera/detection plus the
@@ -481,8 +535,11 @@ explicit one-shot Gemini demonstrations described above. Phase 3 adds requested
 Gemini or local OCR and local speech. Gemini reading with audible eSpeak output
 has passed on Pi 5; offline Tesseract setup and acceptance remain pending.
 Phase 4 adds requested scene snapshots and fresh local two-channel proximity;
-its firmware/host software checks are separate from pending physical acceptance.
-Voice commands and wearable deployment/optimization remain later work.
+the user confirmed functional combined operation. Phase 5 adds M-triggered
+voice commands; local Bluetooth recording/playback passed, with end-to-end
+Gemini command acceptance still pending. Measured
+hardware accuracy, sustained performance, wearable deployment, and upgrades
+remain Phase 6 work at the user's explicit request.
 Model class coverage is limited to the selected model's labels; an empty
 detection list is not evidence that a path is clear. The full plan, official
 references, approval gates, and hardware acceptance record are in

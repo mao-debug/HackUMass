@@ -1,1 +1,1 @@
-"""Reserved audio integrations; Phase 1 never opens a microphone or speaks."""
+"""Explicit short voice input, cloud transcription, and bounded local speech."""

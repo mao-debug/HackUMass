@@ -22,7 +22,7 @@ import numpy as np
 from vidi.ai.scene_description import GeminiSceneDescriber, SceneDescriptionError
 from vidi.audio.text_to_speech import LocalSpeech
 from vidi.camera.capture import CaptureError
-from vidi.core.types import FramePacket, SpeechResult
+from vidi.core.types import FramePacket, OcrResult, SpeechResult
 
 if TYPE_CHECKING:
     from vidi.core.configuration import AppSettings
@@ -31,6 +31,33 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 WINDOW_TITLE = "vidi: D describe | P proximity | S stop speech | R retry | Q quit"
 ACTION_LIMIT = 120
+VOICE_WINDOW_TITLE = "vidi: M command | D describe | T read | P proximity | H help | S stop | R retry | Q quit"
+HELP_TEXT = "Press M and say describe, read text, proximity, stop, or help. Keyboard: D describe, T read text, P proximity, S stop, R retry, Q quit."
+
+
+def _record_voice(settings, cancel):
+    from vidi.audio.speech_to_text import MicrophoneRecorder
+    return MicrophoneRecorder(settings.voice).record(cancel_event=cancel)
+
+
+def _transcribe_voice(settings, clip, cancel):
+    from vidi.audio.speech_to_text import GeminiCommandTranscriber
+    return GeminiCommandTranscriber(settings.cloud, settings.voice).transcribe(clip, cancel_event=cancel)
+
+
+def _parse_voice_command(text):
+    from vidi.assistant.command_handler import parse_command
+    return parse_command(text)
+
+
+def _recognize_text(settings, packet, cancel):
+    from vidi.ai.gemini_text_recognition import GeminiTextRecognizer
+    if cancel.is_set():
+        return None
+    recognizer = GeminiTextRecognizer(settings.cloud, settings.ocr)
+    if cancel.is_set():
+        return None
+    return recognizer.recognize(packet, cancel_event=cancel)
 
 
 def compose_feedback(description: str | None, proximity_text: str | None,
@@ -75,14 +102,16 @@ class _Task:
         self.done = threading.Event()
         self.value = None
         self.failed = False
+        self.failure = None
 
         def run():
             try:
                 if not self.cancel.is_set():
                     self.value = operation(self.cancel)
-            except BaseException:
+            except BaseException as error:
                 # Workers never emit raw service, serial, or engine exceptions.
                 self.failed = True
+                self.failure = error
             finally:
                 self.done.set()
 
@@ -121,7 +150,8 @@ def _snapshot_dict(snapshot):
 
 
 def render_phase4_preview(packet: FramePacket, described: FramePacket | None, description: dict, *, proximity_text: str,
-                          cloud_busy: bool, audio_busy: bool, paused: bool):
+                          cloud_busy: bool, audio_busy: bool, paused: bool,
+                          voice_status: str | None = None, voice_error: str | None = None):
     """Show current pixels separately from the exact image submitted with D."""
     live = packet.image_bgr.copy()
     analysis = np.zeros_like(live) if described is None else described.image_bgr.copy()
@@ -140,24 +170,30 @@ def render_phase4_preview(packet: FramePacket, described: FramePacket | None, de
                 break
             cv2.putText(image, text, (5, y), cv2.FONT_HERSHEY_SIMPLEX, scale, (245, 245, 245), 1, cv2.LINE_AA)
 
-    lines(live, [f"LIVE CAMERA frame {packet.frame_id}", proximity_text,
-                 "Speech active" if audio_busy else "D describe / P proximity / S stop / R retry / Q quit"])
+    controls = "M command / D describe / T read / P proximity / H help / S stop / R retry / Q quit" if voice_status is not None else "D describe / P proximity / S stop / R retry / Q quit"
+    texts = [f"LIVE CAMERA frame {packet.frame_id}", proximity_text,
+             "Speech active" if audio_busy else controls]
+    if voice_status is not None:
+        texts.append("Voice: " + voice_status.replace("_", " "))
+        if voice_error:
+            texts.append(voice_error)
+    lines(live, texts)
     status = description["status"]
     title = "Press D for one scene snapshot"
     if cloud_busy:
-        title = "SCENE REQUEST PENDING - camera continues"
+        title = ("TEXT READING" if description.get("action") == "read_text" else "SCENE REQUEST") + " PENDING - camera continues"
     elif paused:
         title = "SCENE UNAVAILABLE - press R to rearm"
     elif described is not None:
         age = max(0.0, (time.monotonic_ns() - described.captured_monotonic_ns) / 1e9)
-        title = f"SNAPSHOT frame {described.frame_id}, {age:.1f}s old - {status}"
+        title = f"{'TEXT SNAPSHOT' if description.get('action') == 'read_text' else 'SNAPSHOT'} frame {described.frame_id}, {age:.1f}s old - {status}"
     lines(analysis, [title, description.get("text") or description.get("error") or "No scene description requested."])
     return cv2.hconcat((live, analysis))
 
 
 def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open_source,
-                    question: str = "What is in front of me?") -> SimulationResult:
-    """Run until quit, with D/P as the only request triggers.
+                    question: str = "What is in front of me?", voice_commands: bool = False) -> SimulationResult:
+    """Run requested scene/proximity actions, optionally adding M/T/H controls.
 
     S invalidates pending narration and cancels local audio. An already started
     HTTP request may finish, but its response cannot start cancelled speech.
@@ -174,6 +210,8 @@ def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open
         raise SimulationError("Scene live mode requires the object detector to be off.")
     if not isinstance(question, str) or not question.strip() or len(question) > 500:
         raise SimulationError("Ask a nonempty scene question of at most 500 characters.")
+    if voice_commands and (not hasattr(settings, "voice") or settings.models.ocr_backend not in (None, "gemini")):
+        raise SimulationError("Voice mode requires voice settings and the Gemini text-reading backend.")
 
     actions = deque(maxlen=ACTION_LIMIT)
     totals = {"actions": 0, "cloud_requests": 0, "local_reads": 0, "speech_attempts": 0, "ignored_actions": 0}
@@ -181,6 +219,15 @@ def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open
                    "elapsed_s": None, "frame_id": None, "captured_monotonic_ns": None}
     speech_result = SpeechResult()
     cloud_task = local_task = None
+    voice_task = None
+    voice_clip = voice_pending = None
+    voice_stage = None
+    voice_generation = 0
+    voice_paused = False
+    voice_state = {"status": "not_requested", "command": None, "model": None,
+                   "elapsed_s": None, "error": None}
+    reading = OcrResult()
+    cloud_action = "describe"
     local_stage = None
     cloud_generation = local_generation = generation = 0
     cloud_packet = described = last_packet = last_snapshot = None
@@ -203,7 +250,8 @@ def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open
         if settings.simulation.report_path is None:
             return
         report = {
-            "schema_version": 3, "mode": "phase4_scene_live", "continuous": True,
+            "schema_version": 4 if voice_commands else 3,
+            "mode": "phase5_voice_live" if voice_commands else "phase4_scene_live", "continuous": True,
             "source": settings.camera.source, "frames_processed": count,
             "width": last_packet.image_bgr.shape[1] if last_packet else None,
             "height": last_packet.image_bgr.shape[0] if last_packet else None,
@@ -223,6 +271,9 @@ def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open
             "output_frame_id": (cloud_packet or last_packet).frame_id if output else None,
             "report_path": str(settings.simulation.report_path),
         }
+        if voice_commands:
+            report.update(voice_commands_enabled=True, voice=dict(voice_state),
+                          voice_paused=voice_paused, ocr=asdict(reading))
         _save_report(settings.simulation.report_path, report)
 
     def read_sensors(cancel):
@@ -247,15 +298,52 @@ def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open
         try:
             if cancel.is_set():
                 return None, None
+            if cloud_action == "read_text":
+                response = _recognize_text(settings, cloud_packet, cancel)
+                return (None, None) if cancel.is_set() else (response, None)
             describer = GeminiSceneDescriber(settings.cloud)
             if cancel.is_set():
                 return None, None
-            response = describer.describe(cloud_packet.image_bgr, question)
+            response = describer.describe(cloud_packet.image_bgr, question, cancel_event=cancel) if voice_commands else describer.describe(cloud_packet.image_bgr, question)
             return response, None
         except SceneDescriptionError as error:
+            if voice_commands and cancel.is_set():
+                return None, None
             return None, str(error)
         except Exception:
-            return None, "Gemini description failed. Check the connection and model access."
+            if voice_commands and cancel.is_set():
+                return None, None
+            return None, "The requested camera action failed. Check the connection and model access."
+
+    def start_camera(action, packet):
+        nonlocal generation, cloud_generation, cloud_packet, cloud_task, cloud_started, cloud_action, reading
+        generation += 1
+        cloud_generation = generation
+        cloud_action = action
+        cloud_packet = FramePacket(packet.frame_id, packet.captured_monotonic_ns, packet.image_bgr.copy())
+        if action == "read_text":
+            reading = OcrResult(status="pending", frame_id=packet.frame_id, backend="gemini", model=settings.cloud.model)
+        else:
+            description.update(status="pending", text=None, error=None, model=settings.cloud.model,
+                               elapsed_s=None, frame_id=packet.frame_id,
+                               captured_monotonic_ns=packet.captured_monotonic_ns)
+        totals["cloud_requests"] += 1
+        record(action, "pending", frame_id=packet.frame_id)
+        checkpoint()
+        cloud_started = time.monotonic()
+        cloud_task = _Task(cloud_operation)
+
+    def voice_busy():
+        return voice_task is not None or voice_clip is not None or voice_pending is not None
+
+    def cancel_voice():
+        nonlocal voice_clip, voice_pending, voice_stage
+        if voice_task is not None:
+            voice_task.cancel.set()
+        if voice_busy():
+            voice_state.update(status="cancelled", error=None)
+        voice_clip = voice_pending = None
+        voice_stage = None
 
     def stop_narration():
         nonlocal generation, speech_result
@@ -265,6 +353,72 @@ def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open
         if local_task is not None:
             local_task.cancel.set()
             speech_result = replace(speech_result, status="cancelled")
+        cancel_voice()
+
+    def start_help():
+        nonlocal generation, local_task, local_stage, local_generation, speech_result
+        generation += 1
+        cancel_voice()
+        record("help", "ready")
+        logger.info("Requested help: %s", HELP_TEXT)
+        if speak:
+            speech_result = SpeechResult(status="pending", mode="playback", text=HELP_TEXT)
+            local_stage = "speech"
+            local_generation = generation
+            totals["speech_attempts"] += 1
+            checkpoint()
+
+            def operation(cancel):
+                spoken = SpeechResult(status="cancelled", mode="playback", text=HELP_TEXT) if cancel.is_set() else (
+                    LocalSpeech(settings.speech, settings.models.text_to_speech_backend).speak(HELP_TEXT, cancel_event=cancel))
+                return last_snapshot, last_proximity_text, spoken
+
+            local_task = _Task(operation)
+        else:
+            checkpoint()
+
+    def advance_voice(packet):
+        """Dispatch stages only AFTER this frame's S/Q/P input has been handled."""
+        nonlocal voice_task, voice_clip, voice_stage, voice_pending, generation, voice_generation
+        if not voice_commands or voice_generation != generation or voice_paused:
+            return
+        if voice_clip is not None:
+            clip, voice_clip = voice_clip, None
+            voice_stage = "transcribing"
+            voice_state.update(status="transcribing")
+            totals["cloud_requests"] += 1
+            record("voice_transcribe", "pending")
+            checkpoint()
+            voice_task = _Task(lambda cancel, clip=clip: _transcribe_voice(settings, clip, cancel))
+            voice_task.kind = "transcribing"
+        elif voice_pending is not None:
+            action = voice_pending
+            if action in ("describe", "read_text"):
+                if cloud_paused:
+                    voice_pending = None
+                    voice_state.update(status="failed", error="Camera requests are paused. Press R to retry.")
+                    checkpoint()
+                elif cloud_task is None and local_task is None and time.monotonic() >= cooldown_until:
+                    voice_pending = None
+                    voice_state.update(status="ready")
+                    start_camera(action, packet)
+            else:
+                voice_pending = None
+                voice_state.update(status="ready")
+                if action == "stop":
+                    stop_narration()
+                    record("stop", "completed")
+                    checkpoint()
+                elif action == "help":
+                    start_help()
+                elif action == "proximity":
+                    if proximity and local_task is None:
+                        generation += 1
+                        totals["local_reads"] += 1
+                        start_local("proximity")
+                    else:
+                        record("proximity", "ignored_busy_or_disabled")
+                        checkpoint()
 
     def speak_operation(cancel, snapshot, sensor_text, visual_text, captured_ns, unavailable):
         if snapshot is not None:
@@ -295,6 +449,13 @@ def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open
         last_snapshot, last_proximity_text, speech_result = task.value
         return True
 
+    def feedback_image(stage):
+        if stage == "scene_feedback":
+            return description["text"], described.captured_monotonic_ns if described else None
+        if stage == "read_feedback":
+            return reading.text if reading.status == "ready" else "No readable text found.", described.captured_monotonic_ns if described else None
+        return None, None
+
     try:
         with (_open_proximity(settings) if proximity else nullcontext(None)) as monitor:
             with open_source(settings) as capture:
@@ -322,7 +483,17 @@ def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open
                                 None, None if task.cancel.is_set() else "Gemini description could not finish.")
                             described = cloud_packet
                             cancelled = response is None and error is None
-                            if cancelled:
+                            if cloud_action == "read_text":
+                                if cancelled:
+                                    reading = replace(reading, status="cancelled", text="", error=None)
+                                elif response is None or response.status not in ("ready", "no_text"):
+                                    reading = replace(reading, status="failed", text="",
+                                                      error="Gemini text reading is unavailable. Press R to retry.")
+                                    cloud_paused = True
+                                else:
+                                    reading = response
+                                record("read_text", reading.status, frame_id=described.frame_id)
+                            elif cancelled:
                                 description.update(status="cancelled", error=None,
                                                    elapsed_s=max(0.0, time.monotonic() - cloud_started))
                                 record("describe", "cancelled", frame_id=described.frame_id)
@@ -340,9 +511,57 @@ def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open
                                        text=response.text, model=response.model, elapsed_s=response.elapsed_s)
                                 logger.info("Scene snapshot frame %d: %s", described.frame_id, response.text)
                             checkpoint()
-                            if (not cancelled and (response is not None or proximity)
+                            if (cloud_action == "read_text" and reading.status in ("ready", "no_text")
+                                    and cloud_generation == generation and local_task is None):
+                                start_local("read_feedback")
+                            elif (cloud_action == "describe" and not cancelled and (response is not None or proximity)
                                     and cloud_generation == generation and local_task is None):
                                 start_local("scene_feedback")
+
+                        if voice_task is not None and voice_task.done.is_set():
+                            task, voice_task = voice_task, None
+                            completed_stage = getattr(task, "kind", voice_stage)
+                            if completed_stage == "transcribing":
+                                cooldown_until = time.monotonic() + max(5.0, settings.cloud.live_interval_s)
+                            if task.cancel.is_set() or voice_generation != generation:
+                                voice_state.update(status="cancelled", error=None)
+                                record("voice", "cancelled")
+                            elif task.failed or task.value is None:
+                                voice_paused = True
+                                message = "Voice input is unavailable. Press R to retry; D and P remain available."
+                                from vidi.audio.speech_to_text import SpeechRecognitionError
+                                if isinstance(getattr(task, "failure", None), SpeechRecognitionError):
+                                    message = str(task.failure)[:500] + " Press R to retry; D and P remain available."
+                                voice_state.update(status="failed", error=message)
+                                record("voice", "failed")
+                            elif completed_stage == "recording":
+                                voice_clip, task.value = task.value, None
+                                voice_stage = "transcribe_ready"
+                                voice_state.update(status="transcribing")
+                                record("voice_record", "ready")
+                            else:
+                                response, task.value = task.value, None
+                                voice_state.update(model=response.model, elapsed_s=response.elapsed_s)
+                                if response.status == "ready":
+                                    command = _parse_voice_command(response.text)
+                                    if command.supported and command.action in ("describe", "read_text", "proximity", "stop", "help"):
+                                        voice_pending = command.action
+                                        voice_state.update(status="waiting_for_camera_request" if command.action in ("describe", "read_text") else "ready",
+                                                           command=command.action, error=None)
+                                        record("voice_command", "accepted", command=command.action)
+                                        logger.info("Voice command accepted: %s.", command.action)
+                                    else:
+                                        voice_state.update(status="unknown_command", command=None,
+                                                           error="Command not recognized. Press H for help.")
+                                        record("voice_command", "unknown")
+                                elif response.status in ("no_speech", "cancelled"):
+                                    voice_state.update(status=response.status, error=None)
+                                    record("voice", response.status)
+                                else:
+                                    voice_paused = True
+                                    voice_state.update(status="failed", error="Voice recognition is unavailable. Press R to retry.")
+                                    record("voice", "failed")
+                            checkpoint()
 
                         if local_task is not None and local_task.done.is_set():
                             task, local_task = local_task, None
@@ -376,10 +595,10 @@ def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open
                                 last_proximity_text = sensor_text
                                 unavailable = local_stage == "scene_feedback" and description["status"] != "ready"
                                 feedback_sensor_text = sensor_text + (" Scene description unavailable." if unavailable else "")
+                                visual_text, captured_ns = feedback_image(local_stage)
                                 text = compose_feedback(
-                                    description["text"] if local_stage == "scene_feedback" else None,
-                                    feedback_sensor_text, max(0.0, (time.monotonic_ns() - described.captured_monotonic_ns) / 1e9)
-                                    if local_stage == "scene_feedback" and described else 0.0,
+                                    visual_text, feedback_sensor_text,
+                                    max(0.0, (time.monotonic_ns() - captured_ns) / 1e9) if captured_ns is not None else 0.0,
                                     settings.speech.max_words,
                                 )
                                 record(local_stage, "ready", proximity=_snapshot_dict(snapshot),
@@ -388,8 +607,6 @@ def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open
                                     totals["speech_attempts"] += 1
                                     speech_result = SpeechResult(status="pending", mode="playback", text=text)
                                     checkpoint()  # Persist intent before creating any audible process.
-                                    visual_text = description["text"] if local_stage == "scene_feedback" else None
-                                    captured_ns = described.captured_monotonic_ns if local_stage == "scene_feedback" and described else None
                                     local_stage = "speech"
                                     local_task = _Task(lambda cancel, snapshot=snapshot, sensor_text=sensor_text,
                                                       visual_text=visual_text, captured_ns=captured_ns,
@@ -407,12 +624,17 @@ def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open
                                 sensor_text = _format_proximity(monitor.latest(), settings)
                             except Exception:
                                 sensor_text = "Near-field sensors unavailable; left and right are unknown."
+                        display_result = description if cloud_action == "describe" else {
+                            "status": reading.status, "text": reading.text, "error": reading.error, "action": "read_text",
+                        }
                         display = render_phase4_preview(
-                            packet, cloud_packet, description, proximity_text=sensor_text,
+                            packet, cloud_packet, display_result, proximity_text=sensor_text,
                             cloud_busy=cloud_task is not None, audio_busy=local_task is not None,
                             paused=cloud_paused,
+                            voice_status=voice_state["status"] if voice_commands else None,
+                            voice_error=voice_state["error"] if voice_commands else None,
                         )
-                        cv2.imshow(WINDOW_TITLE, display)
+                        cv2.imshow(VOICE_WINDOW_TITLE if voice_commands else WINDOW_TITLE, display)
                         key = cv2.waitKey(1) & 0xFF
                         if key in (ord("q"), ord("Q"), 27):
                             break
@@ -422,6 +644,7 @@ def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open
                             checkpoint()
                         elif key in (ord("r"), ord("R")):
                             cloud_paused = False
+                            voice_paused = False
                             if monitor is not None:
                                 try:
                                     monitor.reconnect()
@@ -430,30 +653,48 @@ def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open
                             record("retry", "rearmed")
                             checkpoint()
                         elif key in (ord("d"), ord("D")):
-                            if cloud_task is not None or local_task is not None or cloud_paused or time.monotonic() < cooldown_until:
+                            if cloud_task is not None or local_task is not None or voice_busy() or cloud_paused or time.monotonic() < cooldown_until:
                                 totals["ignored_actions"] += 1
                                 record("describe", "ignored_busy_paused_or_cooldown")
                             else:
-                                generation += 1
-                                cloud_generation = generation
-                                cloud_packet = FramePacket(packet.frame_id, packet.captured_monotonic_ns,
-                                                           packet.image_bgr.copy())
-                                description.update(status="pending", text=None, error=None, model=settings.cloud.model,
-                                                   elapsed_s=None, frame_id=packet.frame_id,
-                                                   captured_monotonic_ns=packet.captured_monotonic_ns)
-                                totals["cloud_requests"] += 1
-                                record("describe", "pending", frame_id=packet.frame_id)
-                                checkpoint()  # No service client exists before this intent is durable.
-                                cloud_started = time.monotonic()
-                                cloud_task = _Task(cloud_operation)
+                                start_camera("describe", packet)
                         elif key in (ord("p"), ord("P")):
+                            if voice_commands and voice_busy():
+                                generation += 1
+                                cancel_voice()
                             if not proximity or local_task is not None:
                                 totals["ignored_actions"] += 1
                                 record("proximity", "ignored_busy_or_disabled")
                             else:
                                 generation += 1  # Supersede automatic narration from an outstanding D.
+                                cancel_voice()
                                 totals["local_reads"] += 1
                                 start_local("proximity")
+                        elif voice_commands and key in (ord("t"), ord("T")):
+                            if cloud_task is not None or local_task is not None or voice_busy() or cloud_paused or time.monotonic() < cooldown_until:
+                                totals["ignored_actions"] += 1
+                                record("read_text", "ignored_busy_paused_or_cooldown")
+                            else:
+                                start_camera("read_text", packet)
+                        elif voice_commands and key in (ord("h"), ord("H")):
+                            if local_task is None:
+                                start_help()
+                            else:
+                                record("help", "ignored_busy")
+                        elif voice_commands and key in (ord("m"), ord("M")):
+                            if cloud_task is not None or local_task is not None or voice_busy() or voice_paused or time.monotonic() < cooldown_until:
+                                totals["ignored_actions"] += 1
+                                record("voice_record", "ignored_busy_paused_or_cooldown")
+                            else:
+                                generation += 1
+                                voice_generation = generation
+                                voice_stage = "recording"
+                                voice_state.update(status="recording", command=None, error=None, model=None, elapsed_s=None)
+                                record("voice_record", "pending")
+                                checkpoint()
+                                voice_task = _Task(lambda cancel: _record_voice(settings, cancel))
+                                voice_task.kind = "recording"
+                        advance_voice(packet)
                         time.sleep(max(0.0, 1.0 / settings.camera.fps - (time.monotonic() - tick)))
                 except KeyboardInterrupt:
                     if last_packet is None:
@@ -461,10 +702,16 @@ def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open
                     interrupted = True
                 finally:
                     stop_narration()
+                    if voice_task is not None:
+                        record("voice", "cancelled")
+                        voice_task.close()
                     if cloud_task is not None:
-                        description["status"] = "cancelled"
-                        description["elapsed_s"] = max(0.0, time.monotonic() - cloud_started)
-                        record("describe", "cancelled", frame_id=cloud_packet.frame_id)
+                        if cloud_action == "read_text":
+                            reading = replace(reading, status="cancelled", text="", error=None)
+                        else:
+                            description["status"] = "cancelled"
+                            description["elapsed_s"] = max(0.0, time.monotonic() - cloud_started)
+                        record(cloud_action, "cancelled", frame_id=cloud_packet.frame_id)
                         cloud_task.close()
                     if local_task is not None:
                         local_task.close()
@@ -503,4 +750,5 @@ def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open
         description=description["text"], description_status=description["status"],
         description_error=description["error"], description_model=description["model"],
         description_elapsed_s=description["elapsed_s"], speech=speech_result, interrupted=interrupted,
+        ocr=reading,
     )

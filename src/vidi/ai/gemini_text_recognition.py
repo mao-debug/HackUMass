@@ -12,6 +12,7 @@ from collections.abc import Callable, Mapping
 import json
 import math
 import os
+import threading
 import time
 from typing import Any, TYPE_CHECKING
 import unicodedata
@@ -95,7 +96,8 @@ class GeminiTextRecognizer:
         self.ocr = ocr
         self._client_factory = client_factory or _default_client_factory
 
-    def recognize(self, packet: FramePacket) -> OcrResult:
+    def recognize(self, packet: FramePacket, *,
+                  cancel_event: threading.Event | None = None) -> OcrResult:
         started = time.monotonic()
         client = None
 
@@ -105,12 +107,20 @@ class GeminiTextRecognizer:
                 elapsed_s=max(0.0, time.monotonic() - started), error=error, model=self.cloud.model,
             )
 
+        def cancelled():
+            return cancel_event is not None and cancel_event.is_set()
+
+        if cancelled():
+            return result("cancelled")
+
         api_key = os.environ.get("GEMINI_API_KEY", "").strip()
         if not api_key:
             return result("failed", error="Set GEMINI_API_KEY to request optional Gemini text reading.")
         stage = "image"
         try:
             image_data = _encode_image(packet.image_bgr, self.cloud.max_image_edge)
+            if cancelled():
+                return result("cancelled")
             stage = "client"
             client = self._client_factory(
                 api_key=api_key,
@@ -118,6 +128,8 @@ class GeminiTextRecognizer:
                     "timeout": math.ceil(self.ocr.timeout_s * 1000), "retry_options": {"attempts": 0},
                 },
             )
+            if cancelled():
+                return result("cancelled")
             response = client.interactions.create(
                 model=self.cloud.model,
                 input=[
@@ -130,6 +142,8 @@ class GeminiTextRecognizer:
                 tools=[], store=False, background=False, stream=False,
                 automatic_continuation=False, timeout=float(self.ocr.timeout_s),
             )
+            if cancelled():
+                return result("cancelled")
             stage = "response"
             status = response.get("status") if isinstance(response, Mapping) else getattr(response, "status", None)
             if status != "completed":

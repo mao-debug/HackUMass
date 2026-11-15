@@ -14,6 +14,7 @@ from dataclasses import dataclass
 import math
 import os
 import re
+import threading
 import time
 from typing import Any, TYPE_CHECKING
 
@@ -187,9 +188,15 @@ class GeminiSceneDescriber:
         self._client_factory = client_factory or _default_client_factory
 
     def describe(
-        self, image_bgr: Any, question: str = "What is in front of me?"
+        self, image_bgr: Any, question: str = "What is in front of me?", *,
+        cancel_event: threading.Event | None = None,
     ) -> SceneDescriptionResult:
         started = time.monotonic()
+        def check_cancel():
+            if cancel_event is not None and cancel_event.is_set():
+                raise SceneDescriptionError("Gemini description was cancelled.")
+
+        check_cancel()
         api_key = os.environ.get("GEMINI_API_KEY", "").strip()
         if not api_key:
             raise SceneDescriptionError("Set GEMINI_API_KEY to request an optional Gemini description.")
@@ -198,6 +205,7 @@ class GeminiSceneDescriber:
         client = None
         try:
             image_data = _encode_image(image_bgr, self.settings.max_image_edge)
+            check_cancel()
             client = self._client_factory(
                 api_key=api_key,
                 http_options={
@@ -207,6 +215,7 @@ class GeminiSceneDescriber:
                     "retry_options": {"attempts": 0},
                 },
             )
+            check_cancel()
             response = client.interactions.create(
                 model=self.settings.model,
                 input=[
@@ -226,6 +235,7 @@ class GeminiSceneDescriber:
                 automatic_continuation=False,
                 timeout=float(self.settings.timeout_s),
             )
+            check_cancel()
             text = _brief_text(_response_text(response), api_key)
             return SceneDescriptionResult(text, self.settings.model, max(0.0, time.monotonic() - started))
         except SceneDescriptionError:

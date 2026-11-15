@@ -239,6 +239,30 @@ class SpeechSettings:
 
 
 @dataclass(frozen=True)
+class VoiceSettings:
+    """One explicitly requested short recording; settings never open a microphone."""
+
+    device: str = "pulse"
+    record_seconds: int = 5
+    timeout_s: float = 30.0
+    model: str | None = None
+    audio_path: Path | None = None
+
+    def __post_init__(self) -> None:
+        if (not isinstance(self.device, str) or not self.device.strip()
+                or any(character in self.device for character in "\x00\r\n")):
+            raise ConfigurationError("voice.device must be a nonempty literal input-device name without NUL or newlines.")
+        _integer("voice.record_seconds", self.record_seconds)
+        if self.record_seconds > 5:
+            raise ConfigurationError("voice.record_seconds cannot exceed 5 seconds.")
+        _positive_number("voice.timeout_s", self.timeout_s)
+        if self.timeout_s > 60:
+            raise ConfigurationError("voice.timeout_s cannot exceed 60 seconds.")
+        _optional_text("voice.model", self.model)
+        _optional_path("voice.audio_path", self.audio_path)
+
+
+@dataclass(frozen=True)
 class ModelSettings:
     """Local detector selection, optional descriptions, and future backends."""
 
@@ -272,6 +296,7 @@ class AppSettings:
     ocr: OcrSettings = field(default_factory=OcrSettings)
     speech: SpeechSettings = field(default_factory=SpeechSettings)
     proximity: ProximitySettings = field(default_factory=ProximitySettings)
+    voice: VoiceSettings = field(default_factory=VoiceSettings)
 
     def __post_init__(self) -> None:
         if self.log_level not in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
@@ -315,7 +340,7 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         raise ConfigurationError(f"Cannot read configuration {config_path}: {exc}") from exc
     if document is None:
         raise ConfigurationError("Configuration must contain a YAML mapping, not an empty document.")
-    values = _mapping(document, "root", {"camera", "simulation", "models", "log_level", "detection", "cloud", "ocr", "speech", "proximity"})
+    values = _mapping(document, "root", {"camera", "simulation", "models", "log_level", "detection", "cloud", "ocr", "speech", "proximity", "voice"})
     return AppSettings(
         camera=_section(values, "camera", CameraSettings, config_path.parent),
         simulation=_section(values, "simulation", SimulationSettings, config_path.parent),
@@ -326,6 +351,7 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         ocr=_section(values, "ocr", OcrSettings, config_path.parent),
         speech=_section(values, "speech", SpeechSettings, config_path.parent),
         proximity=_section(values, "proximity", ProximitySettings, config_path.parent),
+        voice=_section(values, "voice", VoiceSettings, config_path.parent),
     )
 
 
@@ -337,9 +363,19 @@ def validate_runtime_settings(
     gemini_read: bool = False,
     scene_live: bool = False,
     proximity: bool = False,
+    voice_commands: bool = False,
 ) -> None:
     """Check backend combinations after command-line overrides are applied."""
     backend = settings.models.object_detection_backend or "none"
+    if voice_commands:
+        if not scene_live or not continuous or not settings.simulation.preview:
+            raise ConfigurationError("--voice-commands requires --scene-live --continuous --preview for explicit M activation.")
+        if settings.models.speech_recognition_backend not in (None, "gemini"):
+            raise ConfigurationError("Voice commands support the existing gemini speech-recognition backend.")
+        if settings.models.ocr_backend not in (None, "gemini"):
+            raise ConfigurationError("Voice reading requires the gemini OCR backend.")
+        if settings.voice.audio_path is not None and settings.voice.audio_path.suffix.lower() != ".wav":
+            raise ConfigurationError("voice.audio_path and --command-audio require a local .wav input.")
     if scene_live:
         if not continuous or not settings.simulation.preview:
             raise ConfigurationError("--scene-live requires --continuous and --preview for keyboard activation.")
@@ -440,6 +476,10 @@ def validate_runtime_settings(
         for other in (output, report, speech_output):
             if other is not None and other.resolve() == settings.proximity.fixture_path.resolve():
                 raise ConfigurationError("Exports must not overwrite the proximity fixture input.")
+    if voice_commands and settings.voice.audio_path is not None:
+        for other in (output, report, speech_output):
+            if other is not None and other.resolve() == settings.voice.audio_path.resolve():
+                raise ConfigurationError("Exports must not overwrite the voice audio input.")
     if speech_output is not None:
         for other in (output, report, settings.camera.image_path):
             if other is not None and speech_output.resolve() == other.resolve():

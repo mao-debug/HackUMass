@@ -117,6 +117,7 @@ def run_simulation(
     gemini_read: bool = False,
     scene_live: bool = False,
     proximity: bool = False,
+    voice_commands: bool = False,
 ) -> SimulationResult:
     """Run selected backends; cloud actions require an explicit per-run flag.
 
@@ -127,6 +128,7 @@ def run_simulation(
         settings, describe=describe, read_text=read_text, speak=speak, speech_output=speech_output,
         gemini_detect=gemini_detect, continuous=continuous, gemini_live=gemini_live, gemini_read=gemini_read,
         scene_live=scene_live, proximity=proximity,
+        **({"voice_commands": True} if voice_commands else {}),
     )
     backend = settings.models.object_detection_backend or "none"
     preview = settings.simulation.preview
@@ -143,7 +145,8 @@ def run_simulation(
         from vidi.core.phase4 import run_phase4_live
 
         return run_phase4_live(settings, proximity=proximity, speak=speak,
-                               open_source=_open_source, question=question)
+                               open_source=_open_source, question=question,
+                               **({"voice_commands": True} if voice_commands else {}))
 
     detector = None
     if backend == "fixture":

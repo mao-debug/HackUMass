@@ -59,7 +59,7 @@ def test_module_default_sample_exports_one_frame_from_any_directory(tmp_path):
 @pytest.mark.parametrize(
     ("argument", "expected"),
     [
-        ("--help", "vidi Phase 4"),
+        ("--help", "vidi Phase 5"),
         ("--version", f"vidi {__version__}"),
     ],
 )

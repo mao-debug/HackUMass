@@ -17,7 +17,7 @@ from vidi.core.credentials import CredentialError, prompted_gemini_key, save_gem
 def build_parser() -> argparse.ArgumentParser:
     """Describe local backends and the per-run cloud opt-in."""
     parser = argparse.ArgumentParser(
-        description="vidi Phase 4: camera detection, requested scene descriptions, local proximity, printed-text reading, and optional speech.",
+        description="vidi Phase 5: requested camera scenes, local proximity, printed-text reading, and user-triggered voice commands.",
         allow_abbrev=False,
     )
     parser.add_argument("--version", action="version", version=f"vidi {__version__}")
@@ -49,6 +49,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--save-key", action="store_true", help="Privately enter and save a Gemini key locally, then exit; accepts no key argument")
     parser.add_argument("--describe", action="store_true", help="Send ONE last unannotated image to Gemini (cloud opt-in)")
     parser.add_argument("--scene-live", action="store_true", help="With --continuous --preview, D requests one scene image, P reads local proximity; no automatic uploads or speech")
+    parser.add_argument("--voice-commands", action="store_true", help="With --scene-live --continuous --preview, M records up to 5 seconds and sends audio to Gemini; no continuous listening")
+    parser.add_argument("--command-audio", type=Path, help="On M, send this local WAV instead of recording a microphone; requires --voice-commands")
+    parser.add_argument("--microphone-device", help="Literal ALSA input-device name overriding voice.device; requires --voice-commands")
     parser.add_argument("--proximity", action="store_true", help="Explicitly enable local sensor readings with --describe or --scene-live")
     parser.add_argument("--sensor-port", help="Explicit ESP32 USB serial port; requires --proximity (no automatic port selection)")
     parser.add_argument("--question", help="Optional typed question for --describe or --scene-live; does not enable voice input")
@@ -78,6 +81,17 @@ def main(argv: list[str] | None = None) -> int:
         if args.continuous and args.max_frames is not None:
             raise ConfigurationError("Choose --continuous or --max-frames; continuous mode runs until stopped.")
         settings = load_settings(args.config)
+        if (args.command_audio is not None or args.microphone_device is not None) and not args.voice_commands:
+            raise ConfigurationError("--command-audio and --microphone-device require --voice-commands.")
+        if args.command_audio is not None and args.microphone_device is not None:
+            raise ConfigurationError("Choose --command-audio or --microphone-device for voice input, not both.")
+        if args.microphone_device is not None and settings.voice.audio_path is not None:
+            raise ConfigurationError("Remove voice.audio_path before selecting --microphone-device.")
+        voice_changes = {}
+        if args.command_audio is not None:
+            voice_changes["audio_path"] = args.command_audio.expanduser().resolve()
+        if args.microphone_device is not None:
+            voice_changes["device"] = args.microphone_device
         camera_changes = {}
         if args.image is not None and args.camera_index is not None:
             raise ConfigurationError("Choose either --image or --camera-index for a run.")
@@ -134,6 +148,7 @@ def main(argv: list[str] | None = None) -> int:
             detection=replace(settings.detection, **detection_changes),
             log_level=args.log_level or settings.log_level,
             proximity=replace(settings.proximity, port=args.sensor_port) if args.sensor_port is not None else settings.proximity,
+            voice=replace(settings.voice, **voice_changes),
         )
         if args.sensor_port is not None and not args.proximity:
             raise ConfigurationError("--sensor-port requires --proximity; configuration alone never opens a sensor.")
@@ -144,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise ConfigurationError("Gemini uses cloud.model; --model and --model-config select local model files.")
         logging.basicConfig(level=settings.log_level, format="%(levelname)s: %(message)s")
         speech_output = args.speech_output.expanduser().resolve() if args.speech_output is not None else None
+        voice_options = {"voice_commands": True} if args.voice_commands else {}
         validate_runtime_settings(
             settings, describe=args.describe, read_text=args.read_text,
             speak=args.speak, speech_output=speech_output, gemini_detect=args.gemini_detect,
@@ -151,6 +167,7 @@ def main(argv: list[str] | None = None) -> int:
             gemini_live=args.gemini_live,
             gemini_read=args.gemini_read,
             scene_live=args.scene_live, proximity=args.proximity,
+            **voice_options,
         )
         if args.prompt_key and not (args.gemini_detect or args.describe or args.gemini_live or args.gemini_read or args.scene_live):
             raise ConfigurationError("--prompt-key requires --gemini-detect, --gemini-live, --gemini-read, --describe, or --scene-live.")
@@ -179,6 +196,7 @@ def main(argv: list[str] | None = None) -> int:
                     result = run_simulation(
                         settings, continuous=True, scene_live=True, proximity=args.proximity,
                         speak=args.speak, question=args.question or "What is in front of me?",
+                        **voice_options,
                     )
                     return 130 if result.interrupted else 0
                 elif args.gemini_live:

@@ -6,19 +6,19 @@ equipment has passed an integration test.
 
 | Item | Model or requirement | Status | Verification notes |
 | --- | --- | --- | --- |
-| Current computer | Raspberry Pi 5 Model B Rev 1.1 | Board/boot/runtime identity confirmed in supplied report | Kernel sees 8061 MiB, consistent with an 8 GB board; exact physical RAM capacity not independently verified; power/cooling checks pending |
+| Current computer | Raspberry Pi 5 Model B Rev 1.1 | Board/boot/runtime identity confirmed in supplied report | Kernel sees 8061 MiB, consistent with an 8 GB board; exact physical RAM capacity not independently verified; further power/cooling checks deferred to Phase 6 |
 | Previous computer | Raspberry Pi 4 | Available; earlier validation platform | Debian 12/Bookworm, kernel 6.12, aarch64, Python 3.11.2 reported; RAM/board revision not recorded |
 | Existing desktop access | Partner's monitor and keyboard | Previously connected to the Pi 4 | Verify the Pi 5 desktop connection; use direct desktop/GitHub or USB handoff and preserve the existing installation |
-| Connected camera | Camera Module 3, IMX708 | Pi 5 enumeration and camera-only preview passed | Index 0; 282 frames at 640×480, measured 21.79 FPS; color/clarity assessment pending |
+| Connected camera | Camera Module 3, IMX708 | Pi 5 enumeration and camera-only preview passed | Index 0; 282 frames at 640×480, measured 21.79 FPS; further measured image-quality checks deferred to Phase 6 |
 | Pi 5 camera ribbon | Standard–Mini 15-to-22-pin cable | Sensor detected; exact cable/strain-relief inspection not recorded | Pi 4's 15-to-15-pin ribbon does not fit Pi 5 directly; disconnect power before changing it |
 | Optional AI Camera | IMX500 | Not confirmed as connected | Earlier planned backend remains optional; verify a separate sensor before using its profile |
 | Storage | Existing Pi 4 microSD card | Moved to Pi 5; boot identity reported | Preserve the OS, `.venv-pi`, saved key, models, and artifacts; capacity/free space to record |
 | Portable power | Power bank | To verify | Output capability, runtime, cable, and board compatibility to verify |
-| Pi 5 bench power/cooling | Suitable USB-C supply/cable and cooling | To verify | Record supply profile, fan/heatsink, temperatures, warnings, and throttle flags before sustained work |
-| Voice input | Microphone | To source or verify | Deferred from Phase 2; interface, quality, and placement unverified |
+| Pi 5 bench power/cooling | Suitable USB-C supply/cable and cooling | Measured checks deferred to Phase 6 | Supply profile/quality, fan/heatsink, temperatures, warnings, and throttle flags not fully recorded |
+| Voice input | Bluetooth headset microphone | Pi local capture/playback passed by user confirmation | Actual Bluetooth input selected; requested five-second 16 kHz mono PCM16 capture via `arecord --device pulse` and `paplay` was audible; command recognition/routing still pending |
 | Speech output | Bluetooth headphones | Pi 5 test word and Gemini OCR read-aloud passed by user confirmation | User heard `espeak-ng vidi` and the subsequent printed-text reading; optional neural voice remains pending |
-| Proximity controller | ESP32 USB board | Board/USB connection and pin labels visible in supplied photos | Exact board model, firmware upload, serial protocol-v1 handshake, and combined Pi operation to verify |
-| Proximity channels | Two HC-SR04 ultrasonic sensors | Planned left/right inputs; physical acceptance pending | Left TRIG/ECHO 25/34, right 26/35; photos do not verify divider resistance, actual echo voltage, target accuracy, or power quality |
+| Proximity controller | ESP32-WROOM-32UE module on a USB development board with CP2102N bridge | `/dev/ttyUSB0` and real protocol-v1 paired samples supplied | Sequences 0–2 had both channels `ok`; exact carrier revision, flash capacity, and separate upload log not recorded |
+| Proximity channels | Two HC-SR04 ultrasonic sensors | Functional readings/movement and combined Pi use confirmed | Left TRIG/ECHO 25/34, right 26/35; measured accuracy, crosstalk, divider/echo voltage, and supply checks deferred to Phase 6 |
 | Wearable mounting | Glasses frame and camera accessories | To verify | Fit, attachment, field of view, and cable strain relief to check |
 | Activation input | Optional pushbutton | Optional; unverified | Wiring and software integration deferred |
 
@@ -43,8 +43,10 @@ rate was 21.79 FPS in the camera-only check. A subsequent Gemini live run
 captured 684 frames at 23.43 FPS with four successful responses and no
 unavailable results. The user also confirmed hearing the Pi 5 eSpeak test word
 and a subsequent Gemini OCR reading, which reported `OCR=ready` and
-`speech=completed`. Image quality, recognition accuracy, power/thermal behavior,
-local-model inference, and the optional neural voice remain pending.
+`speech=completed`. Further measured image quality, recognition accuracy,
+power/thermal behavior, and local-model hardware checks are deferred to
+Phase 6 at the user's request. The optional neural voice remains unverified
+and subject to its pending download approval.
 
 Run the read-only prerequisite report before making changes:
 
@@ -69,7 +71,11 @@ free-tier, no-billing-change scope. A saved key never activates uploads alone.
 Pi eSpeak NG installation is approved; optional Piper downloads remain pending.
 Phase 4 pyserial 3.5 and Arduino-ESP32 core 3.3.12/compiler downloads are approved;
 pyserial is installed on Mac, and a local real ESP32 cross-compile passed.
-Pi package setup, board upload, and physical acceptance remain separate.
+Subsequent Pi protocol samples and combined camera/scene/sensor/audio operation
+were supplied; a separate upload log and measured hardware bench remain
+unrecorded. The user accepted current functional testing and explicitly
+deferred further hardware testing/upgrades to Phase 6 while development
+continues. This does not certify all hardware or measured distance accuracy.
 Follow [phase4.md](phase4.md) and the
 [firmware instructions](../esp32code/README.md) before opening the USB port.
 If the existing OS is
@@ -139,7 +145,7 @@ OpenCV/NumPy processing, and preview path.
 | Requested exports | `artifacts/pi5-camera.png` and `artifacts/pi5-camera.json`; no export error reported, but file contents were not independently read or viewed |
 | Nonfatal warnings in this run | Repeated libpng `iCCP: known incorrect sRGB profile` and one GLib-GObject `g_object_unref` critical; run finished; warning origins unconfirmed and no driver reinstall justified by these messages alone |
 | Command discovery | eSpeak NG, rpicam, vcgencmd, bluetoothctl, wpctl, pactl, paplay, pw-play, and aplay available |
-| Optional dependencies | Piper absent in camera environment, downloads pending; local Tesseract and optional microphone modules absent; these are not migration compatibility failures |
+| Optional dependencies | Piper absent in camera environment, downloads pending; local Tesseract and optional microphone modules absent; voice capture uses existing `arecord` instead of those Python modules |
 | Earlier environment-path error | `.venv-pi/bin/python` was run from `~`; resolved after `cd ~/vidi`; environment rebuild not needed |
 | Local speech | User confirmed hearing `espeak-ng vidi` on Pi 5 after the headphone/output check |
 | Gemini live identification | 684 camera frames, measured 23.43 FPS, 4 successful analyses, 0 unavailable results; four HTTP 200 replies |
@@ -147,18 +153,25 @@ OpenCV/NumPy processing, and preview path.
 | Gemini live warnings/completion | Repeated libpng iCCP warnings remained nonfatal; run completed normally with the final capture summary |
 | Gemini OCR and local speech | HTTP 200, `OCR=ready`, `speech=completed`; user confirmed hearing the spoken excerpt; report saved to `artifacts/pi5-gemini-speaking.json` |
 | OCR transcription observations | MLH Hack Days flyer text was returned, with partial lines near the bottom; complete transcription accuracy was not checked against the source |
-| Phase 4 ESP32/USB evidence | Photos show board/connection and pin labels; resistor measurements, echo voltage, firmware upload/handshake, and acoustic testing not recorded |
+| Phase 4 ESP32/USB evidence | ESP32-WROOM-32UE module and CP2102N bridge at `/dev/ttyUSB0`; supplied protocol-v1 paired samples seq 0–2 were real (`simulated: false`) with both channels `ok`; photos also show board/connection and pin labels; carrier revision, flash capacity, separate upload log, resistor measurements, and echo voltage not recorded |
 | Phase 4 native software verification | Six local tests passed, compiling the actual sketch with temporary SDK stubs; these do not certify actual ISR timing, wiring, or acoustics |
 | Phase 4 actual target compile | Clean rebuild passed using Arduino CLI 1.6.0 and Espressif core 3.3.12; FQBN `esp32:esp32:esp32:FlashMode=dio,FlashFreq=40,FlashSize=4M,PSRAM=disabled,UploadSpeed=115200`, all warnings enabled, no warnings; 276476 program bytes (21%), 22788 static RAM bytes (6%); no device opened or flashed |
 | Local build artifacts | Ignored tools/config `artifacts/tools/arduino/`, build tree `artifacts/firmware-build/`, binaries `artifacts/firmware/` including `esp32code.ino.bin`; generated files not committed |
-| Phase 4 sensor bench | Not run: one sensor then both, 50 attempts at 0.5/0.8/1.2/1.5 m; 90% valid and median absolute error ≤10 cm are provisional targets, not results |
-| Phase 4 scene/proximity/audio/FPS | Pi acceptance pending; request-only D/P behavior, unknown/stale handling, audible combined feedback, cleanup, and preview-rate comparison still to record |
+| Phase 4 combined operation | User confirmed camera, requested Gemini descriptions, local sensor feedback, and audible speech worked together with a smooth preview; sustained FPS comparison not measured |
+| Phase 5 local microphone | Actual Bluetooth input confirmed as default; user recorded a requested five-second WAV through ALSA `pulse` (16 kHz, mono, S16_LE) to `artifacts/mic-check.wav`, played it with `paplay`, and explicitly heard their recorded voice; no personal device address recorded |
+| Phase 5 Gemini voice commands | Physical audio transcription and allowlisted action routing remain pending; local recording/playback is a separate functional pass |
+| Phase 4 USB disconnect/recovery | Subsequent live logs showed both channels unavailable on USB disconnect and readings resumed afterward; audible disconnect feedback was not separately confirmed |
+| Phase 4 movement excerpts | Two excerpts of 15 paired records each, seq 35–49 and seq 28–42; user said the setup moved and distances were estimated by eye; these are functional movement checks |
+| 50 cm accuracy trial | Not validated: no confirmed stationary measured reference or complete 50-record accuracy result; the visible readings are not an accuracy pass |
+| Deferred sensor bench | Phase 6, at the user's explicit request: one sensor then both, 50 attempts at 0.5/0.8/1.2/1.5 m; 90% valid and median absolute error ≤10 cm remain provisional targets |
+| Deferred Phase 4 measurements | Phase 6: measured accuracy/crosstalk, exact wiring/divider/echo voltage and supply quality, sustained preview FPS comparison, timed fault/cleanup behavior, and remaining recognition-quality checks |
 | Pending acceptance | Exact OpenCV version, image colors/clarity and exported-file inspection, recognition accuracy, local inference, supply/temperature/throttle checks, and optional neural voice |
 
-Continue with the remaining checks in the
-[migration checklist](pi5-migration.md#pi-5-acceptance-record). Keep all Pi 4
-measurements attributed to their original board. No package installation or
-update is required by the supplied report so far.
+Retain the [migration checklist](pi5-migration.md#pi-5-acceptance-record) for
+the deferred Phase 6 work; the user has chosen to continue software development
+with the functional evidence above. Keep all Pi 4 measurements attributed to
+their original board. No package installation or update is required by the
+supplied report so far.
 
 Use controlled bench scenes before wearable trials. The prototype supplements
 established mobility aids and cannot guarantee obstacle coverage, precise
