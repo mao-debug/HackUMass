@@ -1,0 +1,37 @@
+# Requested B scans and explicit C confirmation; no sensor fusion or move advice.
+camera:
+  source: picamera2
+  width: 1280
+  height: 960
+  fps: 15.0
+  startup_timeout_s: 30.0
+  capture_timeout_s: 5.0
+  settle_s: 1.0
+  autofocus: single_if_supported
+  autofocus_timeout_s: 4.0
+simulation:
+  max_frames: 1
+  preview: false
+models:
+  object_detection_backend: none
+  speech_recognition_backend: gemini
+  text_to_speech_backend: espeak_ng
+cloud:
+  model: gemini-3.5-flash-lite
+  timeout_s: 60.0
+  max_image_edge: 1024
+  live_interval_s: 5.0
+voice:
+  device: pulse
+  record_seconds: 5
+  timeout_s: 30.0
+  model: null
+  audio_path: null
+speech:
+  max_words: 100
+  timeout_s: 60.0
+chess:
+  backend: gemini
+  fixture_path: null
+  orientation: white_near
+  observation_max_age_s: 30.0

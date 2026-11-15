@@ -1,0 +1,2 @@
+# Optional local board state/rules support; no engine or model download.
+chess==1.11.2

@@ -49,8 +49,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--save-key", action="store_true", help="Privately enter and save a Gemini key locally, then exit; accepts no key argument")
     parser.add_argument("--describe", action="store_true", help="Send ONE last unannotated image to Gemini (cloud opt-in)")
     parser.add_argument("--scene-live", action="store_true", help="With --continuous --preview, D requests one scene image, P reads local proximity; no automatic uploads or speech")
-    parser.add_argument("--offline", action="store_true", help="With --scene-live --continuous --preview, disable cloud actions and microphone; P/H remain local")
-    parser.add_argument("--voice-commands", action="store_true", help="With --scene-live --continuous --preview, M records up to 5 seconds and sends audio to Gemini; no continuous listening")
+    parser.add_argument("--chess-live", action="store_true", help="With --continuous --preview, request board scans and confirm changes; physical board recognition is experimental")
+    parser.add_argument("--chess-fixture", type=Path, help="Explicit simulated board observations; requires --chess-live and disables cloud/key use")
+    parser.add_argument("--board-orientation", choices=("white_near", "black_near"), help="Known board orientation; requires --chess-live")
+    parser.add_argument("--offline", action="store_true", help="With scene preview or fixture chess, disable cloud actions and microphone; local controls remain available")
+    parser.add_argument("--voice-commands", action="store_true", help="With --scene-live or Gemini --chess-live plus --continuous --preview, M records up to 5 seconds and sends audio to Gemini; no continuous listening")
     parser.add_argument("--command-audio", type=Path, help="On M, send this local WAV instead of recording a microphone; requires --voice-commands")
     parser.add_argument("--microphone-device", help="Literal ALSA input-device name overriding voice.device; requires --voice-commands")
     parser.add_argument("--proximity", action="store_true", help="Explicitly enable local sensor readings with --describe or --scene-live")
@@ -84,6 +87,17 @@ def main(argv: list[str] | None = None) -> int:
         if args.offline and (args.prompt_key or args.voice_commands):
             raise ConfigurationError("--offline cannot be combined with --prompt-key or --voice-commands.")
         settings = load_settings(args.config)
+        if (args.chess_fixture is not None or args.board_orientation is not None) and not args.chess_live:
+            raise ConfigurationError("--chess-fixture and --board-orientation require --chess-live.")
+        if args.chess_live and (args.proximity or args.sensor_port is not None):
+            raise ConfigurationError("Chess mode does not support --proximity or --sensor-port; use the general scene mode for sensors.")
+        if args.chess_live and args.question is not None:
+            raise ConfigurationError("--question is not supported in chess mode; use its board-information commands.")
+        chess_changes = {}
+        if args.chess_fixture is not None:
+            chess_changes.update(backend="fixture", fixture_path=args.chess_fixture.expanduser().resolve())
+        if args.board_orientation is not None:
+            chess_changes["orientation"] = args.board_orientation
         if (args.command_audio is not None or args.microphone_device is not None) and not args.voice_commands:
             raise ConfigurationError("--command-audio and --microphone-device require --voice-commands.")
         if args.command_audio is not None and args.microphone_device is not None:
@@ -152,6 +166,7 @@ def main(argv: list[str] | None = None) -> int:
             log_level=args.log_level or settings.log_level,
             proximity=replace(settings.proximity, port=args.sensor_port) if args.sensor_port is not None else settings.proximity,
             voice=replace(settings.voice, **voice_changes),
+            chess=replace(settings.chess, **chess_changes),
         )
         if args.sensor_port is not None and not args.proximity:
             raise ConfigurationError("--sensor-port requires --proximity; configuration alone never opens a sensor.")
@@ -173,9 +188,14 @@ def main(argv: list[str] | None = None) -> int:
             scene_live=args.scene_live, proximity=args.proximity,
             **voice_options,
             **offline_options,
+            **({"chess_live": True} if args.chess_live else {}),
         )
-        if args.prompt_key and not (args.gemini_detect or args.describe or args.gemini_live or args.gemini_read or args.scene_live):
-            raise ConfigurationError("--prompt-key requires --gemini-detect, --gemini-live, --gemini-read, --describe, or --scene-live.")
+        fixture_chess = args.chess_live and settings.chess.backend == "fixture"
+        gemini_chess = args.chess_live and settings.chess.backend == "gemini"
+        if args.prompt_key and fixture_chess:
+            raise ConfigurationError("Fixture chess never uses credentials; --prompt-key requires Gemini chess.")
+        if args.prompt_key and not (args.gemini_detect or args.describe or args.gemini_live or args.gemini_read or args.scene_live or gemini_chess):
+            raise ConfigurationError("--prompt-key requires a Gemini detection, reading, description, scene, or chess action.")
 
         # Keep --help/--version available even if OpenCV has not been installed.
         from vidi.camera.capture import CaptureError
@@ -183,9 +203,9 @@ def main(argv: list[str] | None = None) -> int:
         from vidi.core.controller import SimulationError, run_simulation
 
         key_context = (
-            nullcontext() if args.offline
+            nullcontext() if args.offline or fixture_chess
             else prompted_gemini_key() if args.prompt_key
-            else saved_gemini_key() if args.gemini_detect or args.describe or args.gemini_live or args.gemini_read or args.scene_live
+            else saved_gemini_key() if args.gemini_detect or args.describe or args.gemini_live or args.gemini_read or args.scene_live or gemini_chess
             else nullcontext()
         )
         with ExitStack() as contexts:
@@ -198,7 +218,13 @@ def main(argv: list[str] | None = None) -> int:
                     "Saved scene credentials unavailable: %s. Local proximity remains available.", exc,
                 )
             try:
-                if args.scene_live:
+                if args.chess_live:
+                    result = run_simulation(
+                        settings, continuous=True, chess_live=True, speak=args.speak,
+                        **voice_options, **offline_options,
+                    )
+                    return 130 if result.interrupted else 0
+                elif args.scene_live:
                     result = run_simulation(
                         settings, continuous=True, scene_live=True, proximity=args.proximity,
                         speak=args.speak, question=args.question or "What is in front of me?",

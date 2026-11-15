@@ -38,6 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Pi hardware or synthetic Mac simulation (default: sim)")
     parser.add_argument("--run", action="store_true", help="launch the displayed plan; otherwise nothing starts")
     parser.add_argument("--cloud", action="store_true", help="enable requested Gemini actions; otherwise uploads are disabled")
+    parser.add_argument("--chess", action="store_true", help="chessboard-information demo: offline fixtures on sim, requested board scans on Pi")
     parser.add_argument("--voice", action="store_true", help="enable M-triggered Gemini command clips; requires --cloud")
     parser.add_argument("--speak", action="store_true", help="speak requested responses with the existing local engine")
     parser.add_argument("--proximity", action="store_true", help="enable explicit Pi sensing or simulated proximity fixtures")
@@ -73,6 +74,13 @@ def build_plan(args: argparse.Namespace, root: Path = PROJECT_ROOT) -> LaunchPla
         raise ValueError("Choose --command-audio or --microphone-device, not both.")
     if args.target == "sim" and args.voice and args.command_audio is None:
         raise ValueError("Simulation voice needs --command-audio FILE.wav; it does not record a microphone.")
+    if args.chess:
+        if args.proximity or args.sensor_port is not None:
+            raise ValueError("The chess demo uses board information; omit --proximity and --sensor-port.")
+        if args.target == "pi" and not args.cloud:
+            raise ValueError("Pi chessboard scans require --cloud; use --target sim for offline chess fixtures.")
+        if args.target == "sim" and (args.cloud or args.voice):
+            raise ValueError("The chess simulation is offline fixture replay; omit --cloud and --voice.")
     for name, value in (("--microphone-device", args.microphone_device), ("--sensor-port", args.sensor_port)):
         if value is not None and (not value.strip() or any(c in value for c in "\x00\r\n")):
             raise ValueError(f"{name} must be a nonempty literal device name without NUL or newlines.")
@@ -82,11 +90,13 @@ def build_plan(args: argparse.Namespace, root: Path = PROJECT_ROOT) -> LaunchPla
     root = root.resolve()
     environment = ".venv-pi" if args.target == "pi" else ".venv"
     python = _absolute(args.python_path if args.python_path is not None else root / environment / "bin/python")
-    profile = root / "config" / ("pi-phase5.yaml" if args.target == "pi" else "phase5-sim.yaml")
+    profile_name = ("pi-chess.yaml" if args.target == "pi" else "chess-sim.yaml") if args.chess else (
+        "pi-phase5.yaml" if args.target == "pi" else "phase5-sim.yaml")
+    profile = root / "config" / profile_name
     directory = _absolute(args.artifacts_dir) if args.artifacts_dir is not None else root / "artifacts"
     report = directory / f"demo-{args.target}-{uuid.uuid4().hex[:12]}.json"
     command = [str(python), "-m", "vidi", "--config", str(profile),
-               "--continuous", "--scene-live", "--preview", "--report", str(report)]
+               "--continuous", "--chess-live" if args.chess else "--scene-live", "--preview", "--report", str(report)]
     if not args.cloud:
         command.append("--offline")
     if args.voice:
@@ -128,7 +138,13 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(str(error))
     print("vidi demo: " + ("Pi hardware" if plan.target == "pi" else "synthetic simulation"))
     print("Gemini actions: " + ("enabled on request" if plan.cloud else "disabled (offline)"))
-    if plan.voice:
+    if args.chess:
+        print("Chess: B observes one board, C confirms a proposal, X rejects; L last move, W turn, A board, H help.")
+        if args.target == "sim":
+            print("All chess positions are SIMULATED fixtures, not camera recognition.")
+        if plan.voice:
+            print("M sends one requested command clip; check board can then send one image.")
+    elif plan.voice:
         print("M sends one requested command clip; a recognized camera command can then send one image.")
     elif plan.cloud:
         print("D requests one scene image. Add --voice for M commands and T text reading.")

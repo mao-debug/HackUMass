@@ -119,6 +119,7 @@ def run_simulation(
     proximity: bool = False,
     voice_commands: bool = False,
     offline: bool = False,
+    chess_live: bool = False,
 ) -> SimulationResult:
     """Run selected backends; cloud actions require an explicit per-run flag.
 
@@ -131,6 +132,7 @@ def run_simulation(
         scene_live=scene_live, proximity=proximity,
         **({"voice_commands": True} if voice_commands else {}),
         **({"offline": True} if offline else {}),
+        **({"chess_live": True} if chess_live else {}),
     )
     backend = settings.models.object_detection_backend or "none"
     preview = settings.simulation.preview
@@ -142,6 +144,11 @@ def run_simulation(
         os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
     ):
         raise SimulationError("Preview needs a desktop display. Run with --no-preview instead.")
+
+    if chess_live:
+        from vidi.core.chess_live import run_chess_live
+
+        return run_chess_live(settings, speak=speak, voice_commands=voice_commands, open_source=_open_source)
 
     if scene_live:
         from vidi.core.phase4 import run_phase4_live

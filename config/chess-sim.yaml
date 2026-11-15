@@ -1,0 +1,19 @@
+# Invented board observations only; fixture backend never uploads or loads keys.
+camera:
+  source: sample
+  width: 640
+  height: 480
+  fps: 30.0
+simulation:
+  max_frames: 1
+  preview: false
+models:
+  object_detection_backend: none
+speech:
+  max_words: 100
+  timeout_s: 60.0
+chess:
+  backend: fixture
+  fixture_path: ../examples/chess-fixture.json
+  orientation: white_near
+  observation_max_age_s: 30.0

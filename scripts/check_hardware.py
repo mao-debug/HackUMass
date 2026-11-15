@@ -30,6 +30,7 @@ OPTIONAL_MODULES = (
     "vosk",
     "pyttsx3",
     "piper",
+    "chess",
 )
 OPTIONAL_DISTRIBUTIONS = (
     "numpy",
@@ -40,6 +41,7 @@ OPTIONAL_DISTRIBUTIONS = (
     "google-genai",
     "setuptools",
     "piper-tts",
+    "chess",
 )
 OPTIONAL_COMMANDS = (
     "rpicam-hello",
@@ -55,6 +57,7 @@ OPTIONAL_COMMANDS = (
     "pw-play",
     "aplay",
     "afplay",
+    "arecord",
 )
 BOARD_MODEL_PATHS = (
     Path("/sys/firmware/devicetree/base/model"),

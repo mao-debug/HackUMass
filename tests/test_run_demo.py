@@ -36,6 +36,35 @@ def option(argv, name):
     return argv[argv.index(name) + 1]
 
 
+def test_chess_fixture_rehearsal_is_offline_and_has_no_voice_or_sensor_workflow(launcher, tmp_path):
+    selected = plan(launcher, tmp_path, "--chess", "--speak")
+    assert option(selected.argv, "--config").endswith("config/chess-sim.yaml")
+    assert "--chess-live" in selected.argv and "--offline" in selected.argv
+    assert "--scene-live" not in selected.argv and "--voice-commands" not in selected.argv
+    assert "--proximity" not in selected.argv and "--speak" in selected.argv
+
+
+def test_pi_chess_explicitly_selects_requested_cloud_and_voice(launcher, tmp_path):
+    selected = plan(launcher, tmp_path, "--target", "pi", "--chess", "--cloud", "--voice", "--speak")
+    assert option(selected.argv, "--config").endswith("config/pi-chess.yaml")
+    assert "--chess-live" in selected.argv and "--voice-commands" in selected.argv
+    assert "--offline" not in selected.argv and selected.cloud
+
+
+@pytest.mark.parametrize("flags", [
+    ["--chess", "--proximity"], ["--chess", "--cloud"],
+    ["--chess", "--target", "pi"],
+    ["--chess", "--target", "pi", "--cloud", "--proximity", "--sensor-port", "/dev/test"],
+])
+def test_unsupported_chess_launcher_combinations_fail_without_execution(launcher, monkeypatch, flags):
+    execute = Mock()
+    monkeypatch.setattr(launcher, "_exec_plan", execute)
+    with pytest.raises(SystemExit) as error:
+        launcher.main(flags + ["--run"])
+    assert error.value.code == 2
+    execute.assert_not_called()
+
+
 def test_default_dry_run_is_offline_and_has_no_application_or_environment_side_effects(launcher, monkeypatch, capsys):
     original_import = builtins.__import__
 

@@ -263,6 +263,26 @@ class VoiceSettings:
 
 
 @dataclass(frozen=True)
+class ChessSettings:
+    """Requested board observation settings; no rules engine or camera import."""
+
+    backend: str = "gemini"
+    fixture_path: Path | None = None
+    orientation: str = "white_near"
+    observation_max_age_s: float = 30.0
+
+    def __post_init__(self) -> None:
+        if self.backend not in ("gemini", "fixture"):
+            raise ConfigurationError("chess.backend must be gemini or fixture.")
+        _optional_path("chess.fixture_path", self.fixture_path)
+        if self.orientation not in ("white_near", "black_near"):
+            raise ConfigurationError("chess.orientation must be white_near or black_near.")
+        _positive_number("chess.observation_max_age_s", self.observation_max_age_s)
+        if self.observation_max_age_s > 120:
+            raise ConfigurationError("chess.observation_max_age_s cannot exceed 120 seconds.")
+
+
+@dataclass(frozen=True)
 class ModelSettings:
     """Local detector selection, optional descriptions, and future backends."""
 
@@ -297,6 +317,7 @@ class AppSettings:
     speech: SpeechSettings = field(default_factory=SpeechSettings)
     proximity: ProximitySettings = field(default_factory=ProximitySettings)
     voice: VoiceSettings = field(default_factory=VoiceSettings)
+    chess: ChessSettings = field(default_factory=ChessSettings)
 
     def __post_init__(self) -> None:
         if self.log_level not in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
@@ -340,7 +361,7 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         raise ConfigurationError(f"Cannot read configuration {config_path}: {exc}") from exc
     if document is None:
         raise ConfigurationError("Configuration must contain a YAML mapping, not an empty document.")
-    values = _mapping(document, "root", {"camera", "simulation", "models", "log_level", "detection", "cloud", "ocr", "speech", "proximity", "voice"})
+    values = _mapping(document, "root", {"camera", "simulation", "models", "log_level", "detection", "cloud", "ocr", "speech", "proximity", "voice", "chess"})
     return AppSettings(
         camera=_section(values, "camera", CameraSettings, config_path.parent),
         simulation=_section(values, "simulation", SimulationSettings, config_path.parent),
@@ -352,6 +373,7 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         speech=_section(values, "speech", SpeechSettings, config_path.parent),
         proximity=_section(values, "proximity", ProximitySettings, config_path.parent),
         voice=_section(values, "voice", VoiceSettings, config_path.parent),
+        chess=_section(values, "chess", ChessSettings, config_path.parent),
     )
 
 
@@ -365,20 +387,39 @@ def validate_runtime_settings(
     proximity: bool = False,
     voice_commands: bool = False,
     offline: bool = False,
+    chess_live: bool = False,
 ) -> None:
     """Check backend combinations after command-line overrides are applied."""
     backend = settings.models.object_detection_backend or "none"
+    if chess_live:
+        if not continuous or not settings.simulation.preview:
+            raise ConfigurationError("--chess-live requires --continuous --preview for keyboard activation.")
+        if any((scene_live, describe, read_text, gemini_detect, gemini_live, gemini_read)):
+            raise ConfigurationError("Choose --chess-live by itself as the camera action.")
+        if backend != "none" or settings.camera.source == "imx500":
+            raise ConfigurationError("Chess preview requires detector none and an ordinary camera source.")
+        if proximity:
+            raise ConfigurationError("Chess mode does not support --proximity; use the general scene mode for sensors.")
+        if speech_output is not None:
+            raise ConfigurationError("Chess mode supports requested playback, not --speech-output WAV export.")
+        if settings.chess.backend == "fixture":
+            if settings.chess.fixture_path is None:
+                raise ConfigurationError("Fixture chess requires --chess-fixture or chess.fixture_path.")
+            if voice_commands:
+                raise ConfigurationError("Fixture chess cannot enable cloud voice commands or microphone capture.")
+        elif offline:
+            raise ConfigurationError("--offline chess requires the fixture backend; Gemini board observation needs explicit cloud access.")
     if offline:
-        if not scene_live or not continuous or not settings.simulation.preview:
+        if not (scene_live or chess_live) or not continuous or not settings.simulation.preview:
             raise ConfigurationError("--offline requires --scene-live --continuous --preview.")
         if voice_commands:
             raise ConfigurationError("--offline cannot enable voice commands or microphone capture.")
     if voice_commands:
-        if not scene_live or not continuous or not settings.simulation.preview:
+        if not (scene_live or chess_live) or not continuous or not settings.simulation.preview:
             raise ConfigurationError("--voice-commands requires --scene-live --continuous --preview for explicit M activation.")
         if settings.models.speech_recognition_backend not in (None, "gemini"):
             raise ConfigurationError("Voice commands support the existing gemini speech-recognition backend.")
-        if settings.models.ocr_backend not in (None, "gemini"):
+        if not chess_live and settings.models.ocr_backend not in (None, "gemini"):
             raise ConfigurationError("Voice reading requires the gemini OCR backend.")
         if settings.voice.audio_path is not None and settings.voice.audio_path.suffix.lower() != ".wav":
             raise ConfigurationError("voice.audio_path and --command-audio require a local .wav input.")
@@ -413,13 +454,13 @@ def validate_runtime_settings(
             raise ConfigurationError("Use --source picamera2 for a Raspberry Pi Gemini reading snapshot.")
     if gemini_live and not continuous:
         raise ConfigurationError("--gemini-live requires --continuous and authorizes repeated camera images to Google.")
-    if continuous and not scene_live and (describe or read_text or gemini_detect or speak or speech_output is not None):
+    if continuous and not (scene_live or chess_live) and (describe or read_text or gemini_detect or speak or speech_output is not None):
         raise ConfigurationError("Continuous mode cannot be combined with snapshot reading, descriptions, detection, or speech actions.")
     if settings.simulation.async_detection and not continuous:
         raise ConfigurationError("The asynchronous live profile requires --continuous.")
     if settings.simulation.async_detection and backend not in ("none", "opencv_ssd", "fixture", "gemini"):
         raise ConfigurationError("Asynchronous live preview supports ordinary capture with local or Gemini detection.")
-    if (speak or speech_output is not None) and not (read_text or gemini_read or describe or gemini_detect or scene_live):
+    if (speak or speech_output is not None) and not (read_text or gemini_read or describe or gemini_detect or scene_live or chess_live):
         raise ConfigurationError("Speech requires --read-text, --gemini-read, --describe, or --gemini-detect.")
     if speak and speech_output is not None:
         raise ConfigurationError("Choose either --speak or --speech-output, not both.")
@@ -474,15 +515,19 @@ def validate_runtime_settings(
     report = settings.simulation.report_path
     if output is not None and report is not None and output.resolve() == report.resolve():
         raise ConfigurationError("The image output and JSON report must use different paths.")
-    if (read_text or gemini_read or gemini_detect or gemini_live or describe or scene_live) and settings.camera.image_path is not None:
+    if (read_text or gemini_read or gemini_detect or gemini_live or describe or scene_live or chess_live) and settings.camera.image_path is not None:
         for other in (output, report):
             if other is not None and other.resolve() == settings.camera.image_path.resolve():
                 raise ConfigurationError("Exports must not overwrite the input image.")
+    if chess_live and settings.chess.fixture_path is not None:
+        for other in (output, report, speech_output):
+            if other is not None and other.resolve() == settings.chess.fixture_path.resolve():
+                raise ConfigurationError("Exports must not overwrite the chess fixture input.")
     if proximity and settings.proximity.backend == "fixture" and settings.proximity.fixture_path is not None:
         for other in (output, report, speech_output):
             if other is not None and other.resolve() == settings.proximity.fixture_path.resolve():
                 raise ConfigurationError("Exports must not overwrite the proximity fixture input.")
-    if voice_commands and settings.voice.audio_path is not None:
+    if (voice_commands or chess_live) and settings.voice.audio_path is not None:
         for other in (output, report, speech_output):
             if other is not None and other.resolve() == settings.voice.audio_path.resolve():
                 raise ConfigurationError("Exports must not overwrite the voice audio input.")

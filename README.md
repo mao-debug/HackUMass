@@ -16,6 +16,8 @@ accepted a spoken scene-description command, and the user heard both scene
 feedback and printed-text reading. Voice-triggered OCR is not confirmed by
 the supplied log. Further measured hardware checks and
 upgrades are deferred to Phase 6 at the user's request.
+An optional experimental chess mode tracks human-confirmed board information;
+physical chessboard recognition from the glasses is not yet validated.
 
 The [three-minute demo guide](docs/demo.md) provides a return-to-Pi setup,
 presentation sequence, printed card, and offline fallback without claiming
@@ -57,6 +59,40 @@ Simulation voice needs `--command-audio FILE.wav`; Pi voice can optionally use
 value. The launcher installs nothing, changes no audio routes, and starts no
 video recording. With `--run`, the app runs in the foreground with its usual
 cancellation behavior.
+
+## Experimental chessboard information
+
+The optional chess demo observes a board only when requested and proposes a
+standard starting position or one move from confirmed history. A separate
+human confirmation commits it. It provides board information, no suggested
+moves or chess-engine analysis. **Real board recognition from the glasses is
+not yet validated; the user is away from the Pi.**
+
+`chess==1.11.2` is approved and installed in the Mac `.venv`; it is an optional
+project extra and has no effect on default/help/general modes. Pi package
+approval/setup remains pending. No Stockfish or extra model download is needed.
+
+```sh
+# Mac: invented fixture positions, local speech, no key/image/audio uploads.
+python3 scripts/run_demo.py --chess --speak --run
+
+# Pi: controlled first board-image checks after Pi package/setup approval.
+python3 scripts/run_demo.py --target pi --chess --cloud --voice --speak --run
+```
+
+Start with the known standard position, the full board and all corners visible,
+hands removed, and a fixed verified orientation with coordinate corner labels.
+**B** scans once; a sighted partner checks the proposal and presses **C** to
+confirm or **X** to reject. Scan and confirm after every half-move, including
+your own. **L/W/A** read last move/turn/confirmed board; **H** gives help;
+**S** cancels speech/work/proposals; **Q/Esc** quits. If enabled, **M** records
+one short chess command. Fixture mode rejects voice and cloud options.
+
+The Pi profile requests 1280×960 at 15 FPS; that is not an accuracy or speed
+result. Scene/OCR/proximity modes remain separate. Setup approval, fixed
+orientation, manual CLI overrides, and pending physical acceptance are in
+[docs/chess.md](docs/chess.md). Do not rely on the experimental view for
+blindfold play before actual board images are checked with a partner.
 
 ## macOS and VS Code setup
 
@@ -523,7 +559,7 @@ approved non-sensitive image upload.
 [config/pi-gemini.yaml](config/pi-gemini.yaml) selects the opt-in cloud snapshot,
 and [config/pi-imx500.yaml](config/pi-imx500.yaml) is the optional AI Camera profile.
 The `camera`,
-`simulation`, `detection`, `models`, `ocr`, `speech`, `cloud`, `proximity`, and `voice` sections configure their
+`simulation`, `detection`, `models`, `ocr`, `speech`, `cloud`, `proximity`, `voice`, and `chess` sections configure their
 respective boundaries. Unknown keys and invalid values fail clearly. The
 `models.object_detection_backend`, `object_detection_path`, and
 `object_detection_config_path` settings select local detection assets.
