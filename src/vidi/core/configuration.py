@@ -364,9 +364,15 @@ def validate_runtime_settings(
     scene_live: bool = False,
     proximity: bool = False,
     voice_commands: bool = False,
+    offline: bool = False,
 ) -> None:
     """Check backend combinations after command-line overrides are applied."""
     backend = settings.models.object_detection_backend or "none"
+    if offline:
+        if not scene_live or not continuous or not settings.simulation.preview:
+            raise ConfigurationError("--offline requires --scene-live --continuous --preview.")
+        if voice_commands:
+            raise ConfigurationError("--offline cannot enable voice commands or microphone capture.")
     if voice_commands:
         if not scene_live or not continuous or not settings.simulation.preview:
             raise ConfigurationError("--voice-commands requires --scene-live --continuous --preview for explicit M activation.")

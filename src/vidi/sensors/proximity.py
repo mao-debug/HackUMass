@@ -225,13 +225,16 @@ class ProximityMonitor:
                 if delay > 0:
                     self._stop.wait(min(delay, .05))
                     continue
-                next_start = time.monotonic() + interval
                 try:
                     if self._source is None:
                         self._source = self._source_factory(self.settings)
                     if self._stop.is_set():
                         break
                     snapshot = self._source.sample()
+                    # A gap after completion excludes source setup and thread
+                    # scheduling delays from the next request's spacing. This
+                    # is a rate ceiling, not a promise of five pairs/second.
+                    next_start = time.monotonic() + interval
                     if not self._stop.is_set():
                         self._publish(snapshot)
                 except Exception as exc:

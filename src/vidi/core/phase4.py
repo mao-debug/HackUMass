@@ -33,6 +33,8 @@ WINDOW_TITLE = "vidi: D describe | P proximity | S stop speech | R retry | Q qui
 ACTION_LIMIT = 120
 VOICE_WINDOW_TITLE = "vidi: M command | D describe | T read | P proximity | H help | S stop | R retry | Q quit"
 HELP_TEXT = "Press M and say describe, read text, proximity, stop, or help. Keyboard: D describe, T read text, P proximity, S stop, R retry, Q quit."
+OFFLINE_WINDOW_TITLE = "vidi OFFLINE: P proximity | H help | S stop | R retry sensors | Q quit"
+OFFLINE_HELP_TEXT = "Offline mode. P requests local proximity if enabled. H repeats help. S stops speech. R retries local sensors. Q or Escape quits. Camera descriptions, text reading, and microphone commands are disabled."
 
 
 def _record_voice(settings, cancel):
@@ -151,7 +153,8 @@ def _snapshot_dict(snapshot):
 
 def render_phase4_preview(packet: FramePacket, described: FramePacket | None, description: dict, *, proximity_text: str,
                           cloud_busy: bool, audio_busy: bool, paused: bool,
-                          voice_status: str | None = None, voice_error: str | None = None):
+                          voice_status: str | None = None, voice_error: str | None = None,
+                          offline: bool = False):
     """Show current pixels separately from the exact image submitted with D."""
     live = packet.image_bgr.copy()
     analysis = np.zeros_like(live) if described is None else described.image_bgr.copy()
@@ -171,6 +174,8 @@ def render_phase4_preview(packet: FramePacket, described: FramePacket | None, de
             cv2.putText(image, text, (5, y), cv2.FONT_HERSHEY_SIMPLEX, scale, (245, 245, 245), 1, cv2.LINE_AA)
 
     controls = "M command / D describe / T read / P proximity / H help / S stop / R retry / Q quit" if voice_status is not None else "D describe / P proximity / S stop / R retry / Q quit"
+    if offline:
+        controls = "OFFLINE: P proximity / H help / S stop / R retry sensors / Q quit"
     texts = [f"LIVE CAMERA frame {packet.frame_id}", proximity_text,
              "Speech active" if audio_busy else controls]
     if voice_status is not None:
@@ -180,19 +185,22 @@ def render_phase4_preview(packet: FramePacket, described: FramePacket | None, de
     lines(live, texts)
     status = description["status"]
     title = "Press D for one scene snapshot"
-    if cloud_busy:
+    if offline:
+        title = "OFFLINE - cloud uploads and microphone disabled"
+    elif cloud_busy:
         title = ("TEXT READING" if description.get("action") == "read_text" else "SCENE REQUEST") + " PENDING - camera continues"
     elif paused:
         title = "SCENE UNAVAILABLE - press R to rearm"
     elif described is not None:
         age = max(0.0, (time.monotonic_ns() - described.captured_monotonic_ns) / 1e9)
         title = f"{'TEXT SNAPSHOT' if description.get('action') == 'read_text' else 'SNAPSHOT'} frame {described.frame_id}, {age:.1f}s old - {status}"
-    lines(analysis, [title, description.get("text") or description.get("error") or "No scene description requested."])
+    lines(analysis, [title, "Press H for local help." if offline else description.get("text") or description.get("error") or "No scene description requested."])
     return cv2.hconcat((live, analysis))
 
 
 def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open_source,
-                    question: str = "What is in front of me?", voice_commands: bool = False) -> SimulationResult:
+                    question: str = "What is in front of me?", voice_commands: bool = False,
+                    offline: bool = False) -> SimulationResult:
     """Run requested scene/proximity actions, optionally adding M/T/H controls.
 
     S invalidates pending narration and cancels local audio. An already started
@@ -206,6 +214,8 @@ def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open
 
     if not settings.simulation.preview:
         raise SimulationError("Scene live mode requires the desktop preview.")
+    if offline and voice_commands:
+        raise SimulationError("Offline mode cannot enable voice commands or microphone capture.")
     if settings.models.object_detection_backend not in (None, "none"):
         raise SimulationError("Scene live mode requires the object detector to be off.")
     if not isinstance(question, str) or not question.strip() or len(question) > 500:
@@ -274,6 +284,8 @@ def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open
         if voice_commands:
             report.update(voice_commands_enabled=True, voice=dict(voice_state),
                           voice_paused=voice_paused, ocr=asdict(reading))
+        if offline:
+            report.update(offline=True, cloud_uploads_disabled=True)
         _save_report(settings.simulation.report_path, report)
 
     def read_sensors(cancel):
@@ -296,7 +308,7 @@ def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open
 
     def cloud_operation(cancel):
         try:
-            if cancel.is_set():
+            if offline or cancel.is_set():
                 return None, None
             if cloud_action == "read_text":
                 response = _recognize_text(settings, cloud_packet, cancel)
@@ -360,17 +372,18 @@ def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open
         generation += 1
         cancel_voice()
         record("help", "ready")
-        logger.info("Requested help: %s", HELP_TEXT)
+        help_text = OFFLINE_HELP_TEXT if offline else HELP_TEXT
+        logger.info("Requested help: %s", help_text)
         if speak:
-            speech_result = SpeechResult(status="pending", mode="playback", text=HELP_TEXT)
+            speech_result = SpeechResult(status="pending", mode="playback", text=help_text)
             local_stage = "speech"
             local_generation = generation
             totals["speech_attempts"] += 1
             checkpoint()
 
             def operation(cancel):
-                spoken = SpeechResult(status="cancelled", mode="playback", text=HELP_TEXT) if cancel.is_set() else (
-                    LocalSpeech(settings.speech, settings.models.text_to_speech_backend).speak(HELP_TEXT, cancel_event=cancel))
+                spoken = SpeechResult(status="cancelled", mode="playback", text=help_text) if cancel.is_set() else (
+                    LocalSpeech(settings.speech, settings.models.text_to_speech_backend).speak(help_text, cancel_event=cancel))
                 return last_snapshot, last_proximity_text, spoken
 
             local_task = _Task(operation)
@@ -460,7 +473,7 @@ def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open
         with (_open_proximity(settings) if proximity else nullcontext(None)) as monitor:
             with open_source(settings) as capture:
                 processing_started = time.monotonic()
-                logger.info("Scene live active. D: one cloud snapshot; P: local proximity; S: stop speech; R: retry; Q/Esc: quit.")
+                logger.info("Offline preview active. P: local proximity; H: local help; S: stop speech; R: retry sensors; Q/Esc: quit." if offline else "Scene live active. D: one cloud snapshot; P: local proximity; S: stop speech; R: retry; Q/Esc: quit.")
                 try:
                     while True:
                         tick = time.monotonic()
@@ -633,12 +646,18 @@ def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open
                             paused=cloud_paused,
                             voice_status=voice_state["status"] if voice_commands else None,
                             voice_error=voice_state["error"] if voice_commands else None,
+                            **({"offline": True} if offline else {}),
                         )
-                        cv2.imshow(VOICE_WINDOW_TITLE if voice_commands else WINDOW_TITLE, display)
+                        cv2.imshow(OFFLINE_WINDOW_TITLE if offline else VOICE_WINDOW_TITLE if voice_commands else WINDOW_TITLE, display)
                         key = cv2.waitKey(1) & 0xFF
                         if key in (ord("q"), ord("Q"), 27):
                             break
-                        if key in (ord("s"), ord("S")):
+                        if offline and key in (ord("d"), ord("D"), ord("t"), ord("T"), ord("m"), ord("M")):
+                            action = {"d": "describe", "t": "read_text", "m": "voice_record"}[chr(key).lower()]
+                            totals["ignored_actions"] += 1
+                            record(action, "disabled_offline")
+                            checkpoint()
+                        elif key in (ord("s"), ord("S")):
                             stop_narration()
                             record("stop", "completed")
                             checkpoint()
@@ -676,7 +695,7 @@ def run_phase4_live(settings: AppSettings, *, proximity: bool, speak: bool, open
                                 record("read_text", "ignored_busy_paused_or_cooldown")
                             else:
                                 start_camera("read_text", packet)
-                        elif voice_commands and key in (ord("h"), ord("H")):
+                        elif (voice_commands or offline) and key in (ord("h"), ord("H")):
                             if local_task is None:
                                 start_help()
                             else:

@@ -49,6 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--save-key", action="store_true", help="Privately enter and save a Gemini key locally, then exit; accepts no key argument")
     parser.add_argument("--describe", action="store_true", help="Send ONE last unannotated image to Gemini (cloud opt-in)")
     parser.add_argument("--scene-live", action="store_true", help="With --continuous --preview, D requests one scene image, P reads local proximity; no automatic uploads or speech")
+    parser.add_argument("--offline", action="store_true", help="With --scene-live --continuous --preview, disable cloud actions and microphone; P/H remain local")
     parser.add_argument("--voice-commands", action="store_true", help="With --scene-live --continuous --preview, M records up to 5 seconds and sends audio to Gemini; no continuous listening")
     parser.add_argument("--command-audio", type=Path, help="On M, send this local WAV instead of recording a microphone; requires --voice-commands")
     parser.add_argument("--microphone-device", help="Literal ALSA input-device name overriding voice.device; requires --voice-commands")
@@ -80,6 +81,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.continuous and args.max_frames is not None:
             raise ConfigurationError("Choose --continuous or --max-frames; continuous mode runs until stopped.")
+        if args.offline and (args.prompt_key or args.voice_commands):
+            raise ConfigurationError("--offline cannot be combined with --prompt-key or --voice-commands.")
         settings = load_settings(args.config)
         if (args.command_audio is not None or args.microphone_device is not None) and not args.voice_commands:
             raise ConfigurationError("--command-audio and --microphone-device require --voice-commands.")
@@ -160,6 +163,7 @@ def main(argv: list[str] | None = None) -> int:
         logging.basicConfig(level=settings.log_level, format="%(levelname)s: %(message)s")
         speech_output = args.speech_output.expanduser().resolve() if args.speech_output is not None else None
         voice_options = {"voice_commands": True} if args.voice_commands else {}
+        offline_options = {"offline": True} if args.offline else {}
         validate_runtime_settings(
             settings, describe=args.describe, read_text=args.read_text,
             speak=args.speak, speech_output=speech_output, gemini_detect=args.gemini_detect,
@@ -168,6 +172,7 @@ def main(argv: list[str] | None = None) -> int:
             gemini_read=args.gemini_read,
             scene_live=args.scene_live, proximity=args.proximity,
             **voice_options,
+            **offline_options,
         )
         if args.prompt_key and not (args.gemini_detect or args.describe or args.gemini_live or args.gemini_read or args.scene_live):
             raise ConfigurationError("--prompt-key requires --gemini-detect, --gemini-live, --gemini-read, --describe, or --scene-live.")
@@ -178,7 +183,8 @@ def main(argv: list[str] | None = None) -> int:
         from vidi.core.controller import SimulationError, run_simulation
 
         key_context = (
-            prompted_gemini_key() if args.prompt_key
+            nullcontext() if args.offline
+            else prompted_gemini_key() if args.prompt_key
             else saved_gemini_key() if args.gemini_detect or args.describe or args.gemini_live or args.gemini_read or args.scene_live
             else nullcontext()
         )
@@ -197,6 +203,7 @@ def main(argv: list[str] | None = None) -> int:
                         settings, continuous=True, scene_live=True, proximity=args.proximity,
                         speak=args.speak, question=args.question or "What is in front of me?",
                         **voice_options,
+                        **offline_options,
                     )
                     return 130 if result.interrupted else 0
                 elif args.gemini_live:

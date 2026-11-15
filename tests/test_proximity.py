@@ -170,6 +170,45 @@ def test_monitor_new_requests_are_fresh_rate_bounded_and_closed():
     monitor.close()
 
 
+@pytest.mark.parametrize("startup_delay", [.1, .4])
+@pytest.mark.parametrize("dispatch_delay", [0., .06])
+def test_source_startup_does_not_consume_spacing_between_real_sample_calls(monkeypatch, startup_delay, dispatch_delay):
+    """Slow setup or dispatch must not make a subsequent request happen early."""
+    clock = {"now": 10., "stopped": False}
+    starts = []
+    closed = []
+
+    class Stop:
+        def is_set(self):
+            return clock["stopped"]
+
+        def wait(self, seconds):
+            clock["now"] += seconds + 1e-9
+
+    class Source:
+        def sample(self):
+            if not starts:
+                clock["now"] += dispatch_delay
+            starts.append(clock["now"])
+            if len(starts) == 2:
+                clock["stopped"] = True
+            return proximity.unknown_snapshot("no_echo", simulated=True)
+
+        def close(self):
+            closed.append(True)
+
+    def factory(_settings):
+        clock["now"] += startup_delay
+        return Source()
+
+    monkeypatch.setattr(proximity, "time", SimpleNamespace(monotonic=lambda: clock["now"]))
+    monitor = ProximityMonitor(settings(), source_factory=factory)
+    monitor._stop = Stop()
+    monitor._run()
+    assert starts[1] - starts[0] == pytest.approx(.2, abs=1e-8)
+    assert closed == [True]
+
+
 def test_fresh_does_not_return_a_cached_pre_checkpoint_pair():
     monitor = ProximityMonitor(settings())
     monitor._snapshot = snapshot()

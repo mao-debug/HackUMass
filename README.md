@@ -11,15 +11,52 @@ or local OCR and a short local speech response or WAV export. Gemini OCR and
 audible speech have passed a user-run Pi 5 check.
 Phase 4 adds requested scene descriptions and independent left/right ultrasonic
 feedback over an ESP32 USB link; the user confirmed smooth combined operation
-and audible feedback. Phase 5 adds requested short voice commands; local
-Bluetooth capture/playback passed, while Gemini command routing remains
-pending on the Pi. Further measured hardware checks and
+and audible feedback. Phase 5 adds requested short voice commands: the Pi
+accepted a spoken scene-description command, and the user heard both scene
+feedback and printed-text reading. Voice-triggered OCR is not confirmed by
+the supplied log. Further measured hardware checks and
 upgrades are deferred to Phase 6 at the user's request.
+
+The [three-minute demo guide](docs/demo.md) provides a return-to-Pi setup,
+presentation sequence, printed card, and offline fallback without claiming
+unmeasured accuracy or performance. Deferred optimization and hardware work
+are tracked in the [Phase 6 plan](docs/phase6.md).
 
 The default run processes one synthetic sample frame with detection disabled.
 It opens no camera or preview, loads no model, makes no network request, and
 produces no audio. This prototype supplements established mobility aids; it
 does not measure precise distance or guarantee navigation safety.
+
+## Demo launcher
+
+From the repository root, inspect a plan without starting anything:
+
+```sh
+python3 scripts/run_demo.py
+```
+
+The launcher defaults to **synthetic simulation and offline mode**. It only
+prints the selected command/report path; `--run` is required to start the app.
+For an away-from-Pi rehearsal with simulated proximity:
+
+```sh
+python3 scripts/run_demo.py --proximity --run
+```
+
+Offline mode explicitly blocks **D/T/M**, does not load saved credentials,
+and keeps **H/P/S/R/Q** local; P requires `--proximity`. Add `--speak` for
+requested native Mac speech. This uses synthetic pixels and fixture readings,
+not Pi hardware. Reports get unique filenames under the repository's ignored
+`artifacts/` directory. The launcher reuses `.venv/bin/python` for simulation
+or `.venv-pi/bin/python` for `--target pi`; `--python PATH` overrides the existing
+interpreter and `--artifacts-dir DIR` changes the report directory.
+
+Cloud actions require explicit `--cloud`; M commands also require `--voice`.
+Simulation voice needs `--command-audio FILE.wav`; Pi voice can optionally use
+`--microphone-device NAME`. `--prompt-key` requires cloud mode and takes no key
+value. The launcher installs nothing, changes no audio routes, and starts no
+video recording. With `--run`, the app runs in the foreground with its usual
+cancellation behavior.
 
 ## macOS and VS Code setup
 
@@ -206,15 +243,22 @@ There is no continuous listening or wake word. The user approved these short
 audio uploads using the existing SDK/key and free-tier scope; no new Python
 packages are required. The user recorded a requested five-second clip through
 the Pi's Bluetooth microphone and heard their recorded voice through playback.
-Local capture/playback passed; Gemini command recognition/routing remains
-pending on the Pi.
+The subsequent Pi run logged HTTP 200 and an accepted `describe` voice
+command, followed by camera text and separate left/right sensor feedback.
+The user heard both that description and a printed-text response. The log
+does not demonstrate an accepted `read_text` voice command, so voice-triggered
+OCR remains unconfirmed.
 
 Select the headset as the desktop microphone input, then use the existing Pi
 environment and observed ESP32 port:
 
 ```sh
-PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-phase5.yaml --continuous --scene-live --preview --voice-commands --proximity --sensor-port /dev/ttyUSB0 --speak --report artifacts/phase5.json
+python3 scripts/run_demo.py --target pi --cloud --voice --proximity --sensor-port /dev/ttyUSB0 --speak --run
 ```
+
+This selects the Pi profile/interpreter and prints a unique report path under
+ignored `artifacts/`. The manual `python -m vidi` entry point remains documented
+in [Phase 5](docs/phase5.md).
 
 In the focused window, **M** starts one command clip; **T** requests Gemini
 printed-text reading; **H** gives local help. **D/P/S/R/q/Esc** keep their scene,
@@ -230,18 +274,18 @@ local; starting the window does not record or upload audio. Audio clips and raw
 transcripts are not saved in reports; canonical actions/status/model/timing
 are recorded alongside requested scene/OCR/proximity results.
 
-For Mac development with synthetic pixels and proximity fixtures, supply your
-own PCM16 WAV, mono/stereo, 8–48 kHz, at most five seconds:
+For optional cloud voice replay on Mac, supply your own PCM16 WAV, mono/stereo,
+8–48 kHz, at most five seconds:
 
 ```sh
-PYTHONNOUSERSITE=1 PYTHONPATH=src .venv/bin/python -m vidi --config config/phase5-sim.yaml --continuous --scene-live --preview --voice-commands --proximity --command-audio /path/to/your-command.wav --report artifacts/phase5-sim.json
+python3 scripts/run_demo.py --cloud --voice --proximity --command-audio /path/to/your-command.wav --run
 ```
 
 Replace the WAV path; each M sends that explicit clip for transcription.
 Optional `--speak` uses native Mac `say`. The default Pi capture device is
 literal ALSA `pulse`; `--microphone-device` can override it and cannot be paired
 with WAV replay. Detailed input selection, command limits, failures, and
-pending microphone checks are in [docs/phase5.md](docs/phase5.md).
+recorded functional evidence are in [docs/phase5.md](docs/phase5.md).
 The dedicated higher-resolution Phase 3 OCR snapshot profile remains available.
 
 ## Raspberry Pi setup and acceptance
@@ -536,8 +580,9 @@ Gemini or local OCR and local speech. Gemini reading with audible eSpeak output
 has passed on Pi 5; offline Tesseract setup and acceptance remain pending.
 Phase 4 adds requested scene snapshots and fresh local two-channel proximity;
 the user confirmed functional combined operation. Phase 5 adds M-triggered
-voice commands; local Bluetooth recording/playback passed, with end-to-end
-Gemini command acceptance still pending. Measured
+voice commands; local Bluetooth recording/playback and voice-triggered
+description have user-run evidence, and printed-text output was heard.
+Voice-triggered OCR is not established by the supplied log. Measured
 hardware accuracy, sustained performance, wearable deployment, and upgrades
 remain Phase 6 work at the user's explicit request.
 Model class coverage is limited to the selected model's labels; an empty
