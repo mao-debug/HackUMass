@@ -169,7 +169,7 @@ def test_real_tokenizer_api_is_used_without_handwritten_tokens_or_writes(model):
         return [["TOKEN_A","TOKEN_B"]]
 
     assert tokenize_keyword(directory,tokenizer=tokenizer) == "TOKEN_A TOKEN_B\n"
-    assert calls == [((["HEY VIDI"],), {"tokens":str(directory/"tokens.txt"),"tokens_type":"bpe",
+    assert calls == [((["HEY V D"],), {"tokens":str(directory/"tokens.txt"),"tokens_type":"bpe",
                                         "bpe_model":str(directory/"bpe.model")})]
     assert {path.name:path.read_bytes() for path in directory.iterdir()} == before
 

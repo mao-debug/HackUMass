@@ -23,14 +23,19 @@ MODEL_FILES = {
     "tokens": "tokens.txt",
 }
 MAX_PCM_BYTES = 16000 * 2 * 5
+# The approved spoken name is VEE-dee. The model's English letter names
+# reproduce that pronunciation; the rare literal spelling VIDI does not.
+TOKENIZER_PHRASE = "HEY V D"
 
 
 def tokenize_keyword(model_dir: Path, phrase: str = "HEY VIDI", *, tokenizer: Callable | None = None) -> str:
-    """Explicitly produce one keyword-file line using sherpa's real BPE utility.
+    """Encode the spoken hey VEE-dee phrase with sherpa's real BPE utility.
 
     No file is written. sherpa 2.0.1's utility needs sentencepiece AND pypinyin;
     its optional CLI also needs click. Runtime detection needs none of these
-    tokenizer extras. This helper is never called by WakeDetector.
+    tokenizer extras. The public phrase remains HEY VIDI; its intended sound is
+    encoded using English letter names HEY V D. This helper is never called by
+    WakeDetector. Model loading alone does not verify spoken recognition.
     """
     if not isinstance(phrase, str) or phrase.strip().upper() != "HEY VIDI":
         raise WakeWordError("The approved wake phrase is hey vidi.")
@@ -41,7 +46,7 @@ def tokenize_keyword(model_dir: Path, phrase: str = "HEY VIDI", *, tokenizer: Ca
         if tokenizer is None:
             from sherpa_onnx import text2token
             tokenizer = text2token
-        rows = tokenizer(["HEY VIDI"], tokens=str(directory / "tokens.txt"),
+        rows = tokenizer([TOKENIZER_PHRASE], tokens=str(directory / "tokens.txt"),
                          tokens_type="bpe", bpe_model=str(directory / "bpe.model"))
         if (not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], list) or not rows[0]
                 or any(not isinstance(token, str) or not token or any(c.isspace() for c in token) for token in rows[0])):

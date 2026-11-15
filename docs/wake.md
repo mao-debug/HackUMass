@@ -72,8 +72,11 @@ The script uses sherpa's [documented BPE tokenizer implementation](https://githu
 with the downloaded `bpe.model` and `tokens.txt`; it writes
 `models/wake/keywords.txt`. It never downloads files, records audio, reads API
 keys, or calls a cloud service. Do not type guessed tokens or substitute the
-archive's example keywords. The generated line for this model is `▁HE Y ▁VI DI`;
-that is tokenizer output, not a pronunciation test. Keep the model's README and
+archive's example keywords. The approved pronunciation is encoded as English
+letter names `HEY V D` using that tokenizer. Literal `HEY VIDI` failed local
+spoken probes; the letter-name encoding recognized the same intended VEE-dee
+sound at the original score/threshold. The generated line is `▁HE Y ▁ V ▁ D`;
+tokenizer output alone is not a pronunciation test. Keep the model's README and
 license attribution when copying the model directory. Model weights are not
 committed to Git.
 
@@ -92,6 +95,24 @@ tokenizer produced the phrase, the real model loaded, and five seconds of
 synthetic silence produced zero wake events. No real microphone or cloud API
 was used. Local provenance, archive/file hashes and notices are under ignored
 `models/wake/manifest.json`, `NOTICE.txt`, and `SHERPA_ONNX_LICENSE`.
+
+If you prepared keywords before the pronunciation fix, stop vidi, update the
+feature branch, and rerun `scripts/prepare_wake.py --smoke` to replace the local
+keyword file. Restart the assistant afterward; its loaded model does not
+automatically reread a changed file.
+
+Before enabling cloud commands, test the phrase with the headset locally:
+
+```sh
+PYTHONNOUSERSITE=1 .venv-pi/bin/python scripts/check_wake.py --seconds 15
+```
+
+Say “hey VEE dee,” leave a short pause, and repeat several times. Each hit
+prints `Wake detected`; the final JSON reports input levels, processed audio,
+and hit count. No camera, Gemini client, key, recording file or upload is used.
+If there are no hits, retain the output rather than lowering sensitivity
+without an input/false-trigger check. The camera application must be stopped
+during this isolated test. A low or zero hit count is not a successful wake test.
 
 The Pi test must still confirm “hey VEE dee” recognition, near-miss/ambient
 false activations, CPU/load behavior alongside the camera, wake during actual
