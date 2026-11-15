@@ -1,13 +1,16 @@
 # Experimental chessboard information
 
-This optional mode follows a **human-confirmed chess position**. B requests one
+The default optional mode follows a **human-confirmed chess position**. B requests one
 board observation; it can propose the standard starting position or one legal
 move from the last confirmed position. A separate C confirms the proposal only
 after a person checks the physical board. It reports board information, not
 recommended moves, engine analysis, or autonomous play.
+The separate opt-in automatic path below can commit a matching pair of board
+observations through the same legal-history checks. It remains experimental
+and is disabled by default; two agreeing predictions do not establish accuracy.
 
-**Real board recognition from the glasses has not been validated.** The user
-is away from the Pi. The offline fixture demonstrates the software workflow;
+**Real board recognition from the glasses has not been validated.**
+The offline fixture demonstrates the software workflow;
 it is not evidence that a camera can reliably identify a physical board,
 orientation, pieces, or moves. Do not rely on it for blindfold play before
 checking actual board images with a sighted partner.
@@ -22,8 +25,8 @@ described in [python-chess core documentation](https://python-chess.readthedocs.
 the pinned distribution is [chess 1.11.2](https://pypi.org/project/chess/1.11.2/).
 No Stockfish, chess engine, extra AI provider, or engine download is needed.
 
-Pi package approval/setup remains pending. Only after that specific Pi setup
-is approved, the existing camera environment can add the isolated dependency:
+Pi installation is approved and remains to be run. The existing camera
+environment can add the local dependency without replacing its OS packages:
 
 ```sh
 PYTHONNOUSERSITE=1 .venv-pi/bin/python -m pip install --no-deps -r requirements-chess.txt
@@ -75,7 +78,7 @@ The general scene demo remains separate and unchanged.
    the proposed change against the physical board, then separately confirm C
    or reject X. Do not skip moves and assume the internal history caught up.
 
-After Pi setup approval, use this session for controlled initial board-image
+After Pi package setup, use this session for controlled initial board-image
 checks:
 
 ```sh
@@ -160,3 +163,94 @@ from a plausible move alone. Actual Pi package setup, physical images, partner
 confirmation, and glasses-camera usability remain pending. Existing deferred
 hardware accuracy, power, sustained performance, and wearable work remain
 Phase 6; this prototype supplements established mobility aids.
+
+## Experimental calibration and automatic tracking
+
+Automatic tracking is a separate explicit opt-in, disabled in existing profiles.
+It has **no physical chessboard acceptance result**. Retain the human-confirmed
+workflow until real board images, orientation, piece identities, and special
+moves have been checked with a sighted partner. The software does not choose
+moves, move pieces, or run an engine.
+
+The geometry step uses four different local ArUco `DICT_4X4_50` markers:
+**0 top-left, 1 top-right, 2 bottom-right, 3 bottom-left**, relative to the
+camera's board view. Print the generated sheet, cut out each labelled marker
+with its white margin, and place them outside the board corners on the same
+fixed flat surface. Keep marker centers outside every board corner and leave
+all four markers visible. Coordinate labels and a verified `white_near` or
+`black_near` orientation are still required; marker detection does not infer
+chess coordinates or piece identities.
+
+Generate the printable SVG locally, without downloading any marker assets:
+
+```sh
+PYTHONPATH=src .venv/bin/python scripts/calibrate_chess.py --markers artifacts/chess-markers.svg
+```
+
+These tools need an OpenCV build with `cv2.aruco`. Both OpenCV 4.6 legacy and
+new detector APIs are supported. If the Pi's existing build lacks ArUco,
+calibration fails clearly: keep this option disabled and obtain approval for
+an appropriate package change instead of replacing the working camera stack.
+No package is installed by this script.
+
+After returning to the Pi, capture one local setup image with the full board,
+all four markers, hands removed, and the final camera view. The capture below
+has no Gemini request or speech:
+
+```sh
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-chess.yaml --detector none --max-frames 1 --output artifacts/chess-calibration.png
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python scripts/calibrate_chess.py --image artifacts/chess-calibration.png --output artifacts/chess-calibration.json --orientation white_near
+```
+
+In the calibration window, click the board's outer **top-left, top-right,
+bottom-right, bottom-left** corners, then press Enter. X clears the clicks;
+Q/Esc cancels. Click the actual 8×8 board boundaries, not marker corners.
+The bounded local JSON records the clicked board relative to all marker
+corners and the fixed orientation. Existing outputs are never overwritten.
+Repeat calibration when the board-to-marker arrangement changes. Do not
+commit personal setup images/calibration from ignored `artifacts/`.
+
+For every requested automatic scan, each of two distinct fresh source frames
+must independently show all four unique markers. Missing/duplicate markers,
+invalid corners, or marker positions inconsistent with one plane cause
+abstention; there is no last-good crop fallback. The two frames are separated
+by at least 300 milliseconds and rectified into a square image. One Gemini
+request carries both rectified images. Each image must independently report
+all 64 squares, known orientation, full visibility, and no unknown symbols;
+the two complete layouts must agree exactly. A hand or piece motion, missing
+square, disagreement, expiry, cancellation, or late scan result cannot commit
+a change. A matching pair is still a correlated model prediction, not an
+independent measurement of ground truth.
+
+The automatic wrapper accepts only the standard initial layout and then one
+uniquely legal half-move from confirmed history. Castling, en passant, and
+promotion use that recorded history; skipped moves and arbitrary middle-game
+initialization abstain. Both images expire within 30 seconds of capture,
+including time spent in recognition. A pair that has already contributed to
+history cannot be reused. Simulation remains explicitly marked SIMULATED.
+Stopping invalidates the scan generation so a delayed result cannot rearm or
+change state. Existing manual single-image scan/confirm behavior is preserved.
+
+The new assistant runtime selects this path explicitly. A controlled,
+60-second keyboard/preview bench after setup uses:
+
+```sh
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-phase6.yaml --assistant --mode chess --cloud --speak --automatic-chess --calibration artifacts/chess-calibration.json --keyboard-device /dev/input/by-id/USB_KEYBOARD-event-kbd --no-wake --preview --run-seconds 60 --report artifacts/phase6.json
+```
+
+Replace the keyboard path with the verified recovery keyboard on that Pi;
+the example is not evidence that this device path exists. Headless operation
+requires a selected recovery keyboard, even when wake input is enabled.
+The initial bench disables wake input; wake assets/setup and real-board
+acceptance remain separate physical checks. The Phase 6 profile uses the
+user-selected local LJ Piper voice after its Pi setup. Existing profiles retain
+eSpeak. Optional cloud speech requires its own configured backend and explicit
+`--cloud-speech`; that choice is not needed to check board geometry.
+The existing `--chess-live` GUI remains the manual B/C workflow; adding
+automatic support does not silently change it. User approval covers requested
+two-image chess batches, not automatic background image uploads.
+
+Software checks cover synthetic marker planes, absent/duplicate markers,
+legacy/new detector APIs, strict paired responses, disagreement, freshness,
+cancelled generations, and ordinary/special legal moves. They are not a Pi
+camera calibration, recognition accuracy, or wearable usability result.

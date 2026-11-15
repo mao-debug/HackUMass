@@ -1,5 +1,6 @@
-"""Voice auditions use a fixed sample and never capture images or call APIs."""
+"""Fixed voice auditions keep local runs offline and gate cloud selection."""
 
+from contextlib import contextmanager
 import importlib.util
 from pathlib import Path
 import socket
@@ -61,3 +62,79 @@ def test_audition_rejects_non_wav_export_before_engine(tmp_path, speaker):
     assert preview.main(["--output", str(tmp_path / "recording.mp3")]) == 1
     engine.speak.assert_not_called()
     factory.assert_not_called()
+
+
+@pytest.mark.parametrize("arguments", [
+    ["--backend", "gemini"],
+    ["--backend", "piper", "--allow-cloud-speech"],
+    ["--backend", "say", "--gemini-voice", "Kore"],
+    ["--backend", "say", "--piper-model", "existing.onnx"],
+    ["--repeat", "0"],
+    ["--repeat", "6"],
+    ["--repeat", "2", "--output", "sample.wav"],
+])
+def test_invalid_cloud_and_backend_combinations_fail_before_key_or_engine(arguments, speaker, monkeypatch):
+    from vidi.audio import speech_factory
+    from vidi.core import credentials
+
+    _, local = speaker
+    factory = Mock(side_effect=AssertionError("Speech factory reached"))
+    key = Mock(side_effect=AssertionError("Key storage accessed"))
+    monkeypatch.setattr(speech_factory, "create_speech", factory)
+    monkeypatch.setattr(credentials, "saved_gemini_key", key)
+    assert preview.main(arguments) == 1
+    local.assert_not_called()
+    factory.assert_not_called()
+    key.assert_not_called()
+
+
+def test_explicit_cloud_audition_uses_only_fixed_chess_sample_and_closes(speaker, monkeypatch):
+    from vidi.audio import speech_factory
+    from vidi.core import credentials
+
+    _, local = speaker
+    engine = Mock()
+    engine.speak.return_value = SpeechResult(status="completed", backend="gemini")
+    factory = Mock(return_value=engine)
+    active = []
+
+    @contextmanager
+    def selected_key():
+        active.append("opened")
+        yield
+        active.append("closed")
+
+    monkeypatch.setattr(speech_factory, "create_speech", factory)
+    monkeypatch.setattr(credentials, "saved_gemini_key", selected_key)
+    assert preview.main(["--backend", "gemini", "--allow-cloud-speech", "--gemini-voice", "Kore", "--sample", "chess"]) == 0
+    assert active == ["opened", "closed"]
+    assert factory.call_args.args[1] == "gemini"
+    assert factory.call_args.args[0].gemini_voice == "Kore"
+    assert factory.call_args.kwargs == {"cloud_enabled": True}
+    spoken = engine.speak.call_args.args[0]
+    assert spoken == speech_factory.render_chess_speech(preview.CHESS_SAMPLE_TEXT)
+    assert "G one to F three" in spoken
+    engine.close.assert_called_once()
+    local.assert_not_called()
+
+
+def test_repeated_piper_reuses_one_session_without_key_access(speaker, monkeypatch, tmp_path):
+    from vidi.audio import speech_factory
+    from vidi.core import credentials
+
+    _, local = speaker
+    engine = Mock()
+    engine.speak.return_value = SpeechResult(status="completed", backend="piper")
+    factory = Mock(return_value=engine)
+    key = Mock(side_effect=AssertionError("Local preview accessed key storage"))
+    monkeypatch.setattr(speech_factory, "create_speech", factory)
+    monkeypatch.setattr(credentials, "saved_gemini_key", key)
+    runtime = tmp_path / "speech runtime" / "bin" / "python"
+    assert preview.main(["--backend", "piper", "--repeat", "2", "--piper-python", str(runtime)]) == 0
+    factory.assert_called_once()
+    assert factory.call_args.args[0].piper_python_path == runtime
+    assert factory.call_args.kwargs == {"cloud_enabled": False}
+    assert engine.speak.call_count == 2
+    engine.close.assert_called_once()
+    local.assert_not_called()
+    key.assert_not_called()

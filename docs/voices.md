@@ -1,139 +1,159 @@
-# Optional local Piper voice
+# Voice setup and audition
 
-vidi can use Piper for one local spoken response or WAV export. **The choice
-between Piper and Gemini speech, and approval to download Piper packages and
-voice assets, are still pending.** Only documentation/catalog research has
-been approved. Existing profiles keep eSpeak NG; nothing downloads at startup.
-Piper voice quality, latency, and headphone playback have not been benchmarked
-on the Pi.
+vidi supports the existing eSpeak NG/macOS `say` engines, optional local Piper,
+and explicitly enabled Gemini speech. Selecting a voice does not activate a
+microphone or camera. There is no automatic switch between providers.
 
-The optional adapter runs Piper in a separate `.venv-tts` process. The camera,
-OpenCV, and Google SDK stay in the existing `.venv-pi`. Once installed with a
-local model, Piper synthesis needs no network or speech-generation API.
-Gemini OCR remains a separate, explicit image upload when `--gemini-read` is
-used; this integration does not call Gemini text-to-speech.
+The user has approved Piper 1.8.0 and its required PyPI dependencies, both
+voices below from Hugging Face, and fixed audition/selected runtime text uploads
+to Gemini TTS. Further packages, models, or services still need approval. Nothing
+downloads at application startup. Keep the working camera environment intact.
+The user selected LJ Speech after listening to the local samples. Phase 6
+therefore uses local LJ Piper by default; the alternatives remain explicit
+audition choices.
 
-## Proposed voice and runtime
+## Current verification
 
-The candidate is `en_US-ljspeech-medium`: one US English female voice. Its
-[author model card and pinned commit](https://huggingface.co/rhasspy/piper-voices/commit/bae641dcb5a608cff81ccaf7ff018baaca1a33e1)
-describe the LJ Speech dataset as public domain. The ONNX model is
-63,531,379 bytes, about 64 MB; its matching `.onnx.json` is also required.
-Keep the accompanying `MODEL_CARD` with the assets.
+On the development Mac, Piper installed successfully in an isolated `.venv-tts`
+using the existing Python 3.14.6 ARM64 interpreter and binary wheels. Both voices
+generated valid 22,050 Hz mono 16-bit WAV files without playback. Each warm
+session reused one child process for two utterances. Local evidence is in the
+ignored `artifacts/piper-local-synthesis-checks.json`; package and asset manifests
+are `artifacts/piper-mac-install.json` and `artifacts/piper-voice-manifest.json`.
 
-`requirements-tts.txt` pins `piper-tts==1.8.0`; its dependencies are installed
-inside `.venv-tts`. [PyPI release metadata](https://pypi.org/project/piper-tts/1.8.0/)
-lists Python 3.9 or newer, Linux ARM64 and macOS wheels, and the engine's
-GPL-3.0-or-later license. The intended Pi interpreter is its existing Python
-3.11.2. Wheel availability is not an on-device performance result. The
-[Piper project](https://github.com/OHF-Voice/piper1-gpl) and
-[CLI documentation](https://github.com/OHF-Voice/piper1-gpl/blob/main/docs/CLI.md)
-describe local synthesis; the CLI loads the voice for each invocation.
+The Gemini adapter was checked with the installed `google-genai==2.34.0` SDK
+and an offline HTTP mock. No live Gemini speech request has been tested here.
+Pi installation, Bluetooth playback with these new voices, simultaneous
+listening/playback, and end-to-end interruption remain
+on-device acceptance checks. Mac synthesis timings do not establish Pi latency.
 
-## Install only after explicit approval
+## Approved local voices
 
-**Do not run this section until package/dependency and voice-download approval
-is given.** These are proposed Pi steps from the repository root. They contact
-PyPI and Hugging Face; they have not been executed as part of this integration.
+| Voice | Character | Immutable source revision | ONNX SHA-256 |
+| --- | --- | --- | --- |
+| `en_US-ljspeech-medium` | US English female, 22,050 Hz | `bae641dcb5a608cff81ccaf7ff018baaca1a33e1` | `6f52a751e2349abe7a76735eb09dc1875298c77ea2342ffd2fef79ff81b87f22` |
+| `en_US-john-medium` | US English male, 22,050 Hz | `e70533d22ac02da609b7427dd1a8bd5349295e98` | `789c6c875726e627ddee93d51d8727859abe9c091c3d141591f4b83c2072e988` |
 
-Create an isolated environment without `--system-site-packages`; keep the
-working `.venv-pi` intact:
+Each ONNX file is 63,531,379 bytes and needs its matching `.onnx.json`. Keep its
+model card too. Both [LJ Speech](https://huggingface.co/rhasspy/piper-voices/blob/bae641dcb5a608cff81ccaf7ff018baaca1a33e1/en/en_US/ljspeech/medium/MODEL_CARD)
+and [John](https://huggingface.co/rhasspy/piper-voices/blob/e70533d22ac02da609b7427dd1a8bd5349295e98/en/en_US/john/medium/MODEL_CARD)
+cards identify public-domain training data. Piper's engine is
+[GPL-3.0-or-later](https://github.com/OHF-Voice/piper1-gpl/tree/v1.8.0);
+retain the respective license and model information when distributing assets.
+
+From the repository root on the Pi, create a separate environment using its
+existing Python. Do not use `--system-site-packages` for this speech environment:
 
 ```sh
 /usr/bin/python3 -m venv .venv-tts
-.venv-tts/bin/python -m pip install --only-binary=:all: -r requirements-tts.txt
+.venv-tts/bin/python -m pip install --index-url https://pypi.org/simple --only-binary=:all: -r requirements-tts.txt
 ```
 
-If no compatible wheel is available, stop and report the error before changing
-the runtime or attempting a source build. No audio-server installation is
-part of these steps.
+The pinned [Piper release](https://pypi.org/project/piper-tts/1.8.0/) provides
+the runtime; its dependencies include ONNX Runtime, NumPy, and pathvalidate.
+If compatible wheels are unavailable, stop before changing Python or attempting
+a source build. The Mac setup used ONNX Runtime 1.32.0; the Pi resolver must
+select wheels compatible with its existing Python 3.11 ARM64 environment.
 
-Download the model, matching configuration, and model card at fixed commit
-`bae641dcb5a608cff81ccaf7ff018baaca1a33e1`:
+Download the approved fixed assets. These commands contact Hugging Face:
 
 ```sh
 mkdir -p models/piper
 curl --fail --location --output models/piper/en_US-ljspeech-medium.onnx https://huggingface.co/rhasspy/piper-voices/resolve/bae641dcb5a608cff81ccaf7ff018baaca1a33e1/en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx
 curl --fail --location --output models/piper/en_US-ljspeech-medium.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/bae641dcb5a608cff81ccaf7ff018baaca1a33e1/en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx.json
-curl --fail --location --output models/piper/MODEL_CARD https://huggingface.co/rhasspy/piper-voices/resolve/bae641dcb5a608cff81ccaf7ff018baaca1a33e1/en/en_US/ljspeech/medium/MODEL_CARD
-sha256sum models/piper/en_US-ljspeech-medium.onnx
+curl --fail --location --output models/piper/en_US-ljspeech-medium.MODEL_CARD https://huggingface.co/rhasspy/piper-voices/resolve/bae641dcb5a608cff81ccaf7ff018baaca1a33e1/en/en_US/ljspeech/medium/MODEL_CARD
+curl --fail --location --output models/piper/en_US-john-medium.onnx https://huggingface.co/rhasspy/piper-voices/resolve/e70533d22ac02da609b7427dd1a8bd5349295e98/en/en_US/john/medium/en_US-john-medium.onnx
+curl --fail --location --output models/piper/en_US-john-medium.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/e70533d22ac02da609b7427dd1a8bd5349295e98/en/en_US/john/medium/en_US-john-medium.onnx.json
+curl --fail --location --output models/piper/en_US-john-medium.MODEL_CARD https://huggingface.co/rhasspy/piper-voices/resolve/e70533d22ac02da609b7427dd1a8bd5349295e98/en/en_US/john/medium/MODEL_CARD
+sha256sum models/piper/en_US-ljspeech-medium.onnx models/piper/en_US-john-medium.onnx
 ```
 
-The expected ONNX SHA-256, recorded in the author's Git LFS pointer, is:
+Compare the hashes exactly with the table before using the files. On macOS use
+`shasum -a 256` instead of `sha256sum`. The Mac download manifest also records
+the configuration/card hashes and fixed source URLs. No assets or virtual
+environments belong in Git.
 
-```text
-6f52a751e2349abe7a76735eb09dc1875298c77ea2342ffd2fef79ff81b87f22
-```
+## Compare fixed samples
 
-Compare it exactly before use; stop if it differs. On macOS, the equivalent
-checksum command is `shasum -a 256 models/piper/en_US-ljspeech-medium.onnx`.
-The application requires existing local assets and never fetches missing ones.
-
-## Preview without a camera or cloud request
-
-After approved setup, pair the headphones and select them as the desktop audio
-output as described in [Phase 3](phase3.md#bluetooth-headphones-on-the-pi).
-The preview script speaks a fixed short sample using only the selected local
-speech settings. It does not open a camera, read a saved API key, or call
-Gemini, even when its configuration also contains OCR settings.
-
-Compare the existing eSpeak NG voice and optional Piper voice at a comfortable
-volume:
+Pair/select the headphones using the [existing Bluetooth setup](phase3.md#bluetooth-headphones-on-the-pi).
+Run each neutral and chess sample at a comfortable, consistent volume. The
+script uses fixed text, never a camera frame or microphone recording. Local
+auditions do not access a saved API key.
 
 ```sh
-PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python scripts/preview_voice.py --config config/pi-gemini-ocr.yaml
-PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python scripts/preview_voice.py --config config/pi-piper-ocr.yaml
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python scripts/preview_voice.py --backend espeak_ng --sample chess
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python scripts/preview_voice.py --backend piper --piper-python .venv-tts/bin/python --piper-model models/piper/en_US-ljspeech-medium.onnx --sample chess --repeat 2
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python scripts/preview_voice.py --backend piper --piper-python .venv-tts/bin/python --piper-model models/piper/en_US-john-medium.onnx --sample chess --repeat 2
 ```
 
-The eSpeak comparison requires its installed executable. To generate a Piper
-sample without playing it, use:
+Omit `--sample chess` for the neutral sample. On Mac use `.venv/bin/python`;
+use `--backend say` for the existing local baseline. `--repeat 2` reuses a warm
+Piper worker; a single local audition uses the existing per-invocation adapter.
+To export without any playback, replace `--repeat 2` with
+`--output artifacts/piper-chess.wav`. WAV export allows one sample at a time.
+Ctrl+C cancels the audition and closes its worker.
+
+Piper configuration uses `models.text_to_speech_backend: piper`,
+`speech.piper_python_path: ../.venv-tts/bin/python`, and
+`speech.piper_model_path: ../models/piper/en_US-ljspeech-medium.onnx` in a YAML
+file under `config/`. Paths are relative to that file. The existing
+`config/pi-piper-ocr.yaml` remains available for a requested OCR reading.
+
+The Phase 6 speech factory keeps a loaded Piper model in its isolated worker
+for successful consecutive utterances. Cancelling inference destroys that
+worker and discards late audio; a later request starts a new worker. Playback
+is locally cancellable. No device routes or audio servers are changed.
+
+## Explicit Gemini speech audition
+
+The Gemini audition defaults to `gemini-3.8-flash-lite-tts`, with `Charon`; `Kore` is
+the second audition candidate. The current official
+[speech generation documentation](https://aistudio.google.com/docs/speech-generation)
+describes Interactions streaming PCM at 24 kHz. The adapter uses the installed
+Google SDK, one stateless request per utterance, no retries/history/tools, and
+bounded text, audio, and timeout limits.
+
+These commands send only the fixed chosen sample text to Google, using the
+existing saved credential mechanism. They do not upload camera/microphone data:
 
 ```sh
-PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python scripts/preview_voice.py --config config/pi-piper-ocr.yaml --output artifacts/piper-preview.wav
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python scripts/preview_voice.py --backend gemini --allow-cloud-speech --gemini-voice Charon --sample chess
+PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python scripts/preview_voice.py --backend gemini --allow-cloud-speech --gemini-voice Kore --sample chess
 ```
 
-A completed engine run does not establish physical audibility. Missing runtime,
-model/configuration, player, or invalid WAV output produces a failure rather
-than a download or automatic engine fallback. Ctrl+C stops the local work.
+Without `--allow-cloud-speech`, Gemini audition fails before key access or a
+request. Runtime Gemini speech likewise requires the explicitly selected
+backend and runtime `--cloud-speech`/`--cloud` enablement; a key alone does not
+authorize uploads. Configuration uses `speech.gemini_model`,
+`speech.gemini_voice`, and an optional `speech.gemini_style`.
 
-## Select Piper for one reading
+Linux can play streamed raw PCM through the existing `paplay`. Other players
+and Mac receive a completed validated WAV before playback. Stop immediately
+cancels local playback and discards late results; closing a cloud transport is
+best effort and does not establish server-side cancellation or refunded usage.
+Connection, quota, format, and player failures do not switch providers.
+Transport cleanup is bounded locally; another Gemini utterance is refused
+while prior cleanup remains unfinished rather than accumulating background work.
+Consult the project's active quota in AI Studio and Google's current
+[pricing](https://aistudio.google.com/docs/pricing#gemini-3.8-flash-lite-tts)
+before use; the application makes no billing changes.
 
-After the user chooses this voice and setup/playback are verified, stop any
-live camera command before taking the separate OCR snapshot. This command
-uploads one newly captured image to Gemini, preserves the full transcription,
-and requests one local Piper excerpt:
+## Choose the demonstration voice
 
-```sh
-PYTHONNOUSERSITE=1 PYTHONPATH=src .venv-pi/bin/python -m vidi --config config/pi-piper-ocr.yaml --gemini-read --speak --report artifacts/pi-piper-reading.json
-```
+Ask the intended listener to compare neutral speech, chess coordinates,
+captures, castling, and a longer printed-text excerpt. Record misunderstood
+words and coordinates, comfort, first-audio delay, total duration, and stop
+delay for each candidate. Compare cold and repeated warm Piper separately;
+record network conditions for Gemini. A valid WAV does not prove audibility
+or intelligibility.
 
-Replace `--speak` with `--speech-output artifacts/pi-piper-reading.wav` for
-WAV export without playback. Choosing the original `config/pi-gemini-ocr.yaml`
-profile keeps eSpeak NG. Neither profile activates speech without an explicit
-speech flag.
+On the Pi, verify the chosen voice through the actual headphones, stop speech
+mid-sentence, then confirm the next command works without old audio. Test
+offline behavior and a failed cloud request. Simultaneous wake listening and
+Bluetooth playback need a separate check: microphone and speaker success in
+separate tests does not establish full-duplex behavior. Keep eSpeak available
+as an explicitly selected offline profile until the new choice passes.
 
-The Piper profile sets these speech values; paths in YAML resolve relative to
-the YAML file:
-
-| Setting | Value or behavior |
-| --- | --- |
-| `models.text_to_speech_backend` | `piper` |
-| `speech.piper_python_path` | `../.venv-tts/bin/python` |
-| `speech.piper_model_path` | `../models/piper/en_US-ljspeech-medium.onnx` |
-| Matching voice configuration | Same path plus `.json` |
-| `speech.piper_length_scale` | `1.1`; duration scale, not words per minute |
-| `speech.max_words` | 60 recognized words, then truncation feedback |
-| `speech.timeout_s` | 60 seconds shared by synthesis, validation, and playback |
-| `speech.player` | Omitted/null: automatic local player selection |
-
-Linux automatic playback selects an installed `paplay`, then `pw-play` if
-`paplay` is absent. macOS selects `afplay`. `aplay` is available only through
-explicit `speech.player: aplay`; it is not an automatic Bluetooth fallback.
-An explicit player must be installed. A selected player failure is reported
-without retrying another player or changing audio routes. WAV export needs no
-player and never plays sound.
-
-OCR is checkpointed before speech. The complete text remains in the report if
-speech fails or is interrupted; only the speech copy is limited to 60 words.
-Check intelligibility, startup time, cancellation, WAV export, and actual
-headphone playback on the Pi before selecting this voice for the demonstration.
+Only speech rendering expands isolated chess coordinates (for example, `g1`
+becomes “G one”). Stored moves, board state, and confirmation IDs are unchanged.
+Chess speech reports observations and proposals; it does not choose moves.

@@ -54,6 +54,11 @@ RESPONSE_SCHEMA = {
     "required": ["board_visible", "orientation_confirmed", "squares"],
     "additionalProperties": False,
 }
+PAIR_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {"first": RESPONSE_SCHEMA, "second": RESPONSE_SCHEMA},
+    "required": ["first", "second"], "additionalProperties": False,
+}
 
 
 class ChessObservationError(RuntimeError):
@@ -159,6 +164,99 @@ class GeminiChessObserver:
             return result(status, squares=squares, error=error)
         except (ValueError, TypeError, RecursionError):
             return result("failed", error="Gemini returned invalid chessboard data. The confirmed position was kept.")
+        except Exception as error:
+            if cancelled():
+                return result("cancelled")
+            return result("failed", error=str(_service_failure(error)).replace("another snapshot", "another board scan"))
+        finally:
+            if client is not None:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+
+    def observe_pair(self, first: FramePacket, second: FramePacket, *,
+                     cancel_event: threading.Event | None = None) -> tuple[BoardObservation, BoardObservation]:
+        """Request both rectified views once; only strict all-square agreement is ready.
+
+        The caller must rectify each fresh frame independently. This method does
+        not treat an earlier crop or a rules-predicted layout as visual evidence.
+        """
+        started = time.monotonic()
+        client = None
+
+        def cancelled():
+            return cancel_event is not None and cancel_event.is_set()
+
+        def result(status, squares=((), ()), error=None):
+            return tuple(BoardObservation(packet.frame_id, packet.captured_monotonic_ns,
+                         status=status, squares=values, orientation=self.settings.orientation,
+                         model=self.cloud.model, elapsed_s=max(0., time.monotonic() - started), error=error)
+                         for packet, values in zip((first, second), squares))
+
+        def fresh_pair():
+            now = time.monotonic_ns()
+            age = min(30., getattr(self.settings, "observation_max_age_s", 30.)) * 1_000_000_000
+            return (type(first.frame_id) is int and type(second.frame_id) is int
+                    and 0 < first.frame_id < second.frame_id
+                    and type(first.captured_monotonic_ns) is int and type(second.captured_monotonic_ns) is int
+                    and second.captured_monotonic_ns - first.captured_monotonic_ns >= 300_000_000
+                    and all(0 < packet.captured_monotonic_ns <= now
+                            and now - packet.captured_monotonic_ns <= age for packet in (first, second)))
+
+        if cancelled():
+            return result("cancelled")
+        if not fresh_pair():
+            return result("unclear", error="Use two fresh board frames at least 300 milliseconds apart.")
+        key = os.environ.get("GEMINI_API_KEY", "").strip()
+        if not key:
+            return result("failed", error="A Gemini key is required for a requested chessboard scan.")
+        try:
+            orientation = _orientation_text(self.settings.orientation)
+            encoded = [_encode_image(packet.image_bgr, self.cloud.max_image_edge) for packet in (first, second)]
+            if cancelled():
+                return result("cancelled")
+            if not fresh_pair():
+                return result("unclear", error="The board frames expired before upload. Capture a new pair.")
+            client = self._factory(api_key=key, http_options={
+                "timeout": math.ceil(self.cloud.timeout_s * 1000), "retry_options": {"attempts": 0},
+            })
+            if cancelled():
+                return result("cancelled")
+            if not fresh_pair():
+                return result("unclear", error="The board frames expired before upload. Capture a new pair.")
+            response = client.interactions.create(
+                model=self.cloud.model,
+                input=[{"type": "text", "text": "Independently report all 64 squares for FIRST then SECOND image. "
+                        "Return first and second observations; do not copy or reconcile disagreements. " + orientation},
+                       {"type": "image", "data": encoded[0], "mime_type": "image/jpeg"},
+                       {"type": "image", "data": encoded[1], "mime_type": "image/jpeg"}],
+                system_instruction=SYSTEM_INSTRUCTION + " For this two-image request return exactly first and second, each with the stated observation fields. Judge each image independently.",
+                generation_config={"max_output_tokens": 4096, "tool_choice": "none"},
+                response_format={"type": "text", "mime_type": "application/json", "schema": PAIR_RESPONSE_SCHEMA},
+                tools=[], store=False, background=False, stream=False,
+                automatic_continuation=False, timeout=float(self.cloud.timeout_s),
+            )
+            if cancelled():
+                return result("cancelled")
+            if not fresh_pair():
+                return result("unclear", error="The board frames expired during recognition. Confirmed history was kept.")
+            status = response.get("status") if isinstance(response, Mapping) else getattr(response, "status", None)
+            if status != "completed":
+                return result("failed", error="Gemini did not complete both chessboard observations.")
+            text = _response_text(response)
+            if len(text) > MAX_REPLY_CHARACTERS or key.casefold() in text.casefold():
+                raise ValueError
+            document = _decode(text)
+            if not isinstance(document, dict) or set(document) != {"first", "second"}:
+                raise ValueError
+            a, b = _squares(document["first"]), _squares(document["second"])
+            if a[0] != "ready" or b[0] != "ready" or a[1] != b[1]:
+                return result("unclear", squares=(a[1], b[1]),
+                              error="The two complete board views do not agree. Confirmed history was kept.")
+            return result("ready", squares=(a[1], b[1]))
+        except (ValueError, TypeError, RecursionError):
+            return result("failed", error="Gemini returned invalid paired chessboard data. Confirmed history was kept.")
         except Exception as error:
             if cancelled():
                 return result("cancelled")

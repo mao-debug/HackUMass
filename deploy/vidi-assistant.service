@@ -1,0 +1,23 @@
+# Review config/pi-phase6.yaml and run the same command manually before enabling.
+# Install as a USER unit; do not run the camera/microphone assistant as root.
+[Unit]
+Description=vidi requested camera and local wake assistant
+After=pipewire.service pipewire-pulse.service wireplumber.service
+Wants=pipewire.service pipewire-pulse.service wireplumber.service
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=%h/vidi
+Environment=PYTHONNOUSERSITE=1
+Environment=PYTHONPATH=%h/vidi/src
+ExecStart=%h/vidi/.venv-pi/bin/python -m vidi --config %h/vidi/config/pi-phase6.yaml --assistant --mode chess --cloud --speak --report %h/vidi/artifacts/assistant.json
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=8
+KillMode=control-group
+UMask=0077
+
+[Install]
+WantedBy=default.target

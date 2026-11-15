@@ -1,6 +1,7 @@
 .venv/
 .venv-pi/
 .venv-tts/
+.venv-wake/
 __pycache__/
 *.py[cod]
 .pytest_cache/

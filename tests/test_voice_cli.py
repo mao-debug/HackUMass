@@ -117,6 +117,6 @@ def test_help_explains_trigger_duration_and_cloud_audio_without_activation(capsy
         cli.main(["--help"])
     assert caught.value.code == 0
     help_text = capsys.readouterr().out
-    assert "vidi Phase 5" in help_text
+    assert "vidi Phase 6" in help_text
     assert "--voice-commands" in help_text and "--command-audio" in help_text
     assert "5 seconds" in help_text and "audio to Gemini" in help_text

@@ -1,0 +1,8 @@
+# Optional local wake runtime; never part of the default desktop/Pi install.
+# On Pi use --no-deps with both pins to preserve OS NumPy/OpenCV.
+sherpa-onnx==2.0.1
+sherpa-onnx-core==2.0.1
+# Explicit keyword preparation only (not needed after keywords.txt exists).
+sentencepiece==0.2.3
+pypinyin==0.55.0
+click==8.5.1

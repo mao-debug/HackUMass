@@ -127,6 +127,8 @@ class ManagedPiCapture:
         self._memory = None
         self._closed = False
         self._opened = False
+        self._opening = False
+        self._lifecycle_lock = threading.RLock()
         self._last_frame_id = 0
         self._frame_bytes = (camera_settings.width + 32) * (camera_settings.height + 2) * 3
 
@@ -141,44 +143,68 @@ class ManagedPiCapture:
         """Subclasses validate their local assets before any process is started."""
 
     def _open(self) -> None:
-        if self._closed:
-            raise CaptureError(f"The {self._source_name} source is closed. Create a new {type(self).__name__}.")
-        if self._opened:
-            return
-        if sys.platform != "linux":
-            raise CaptureError(f"{self._source_name} capture requires Raspberry Pi OS/Linux; use --source sample on macOS.")
-        self._validate_source()
+        with self._lifecycle_lock:
+            if self._closed:
+                raise CaptureError(f"The {self._source_name} source is closed. Create a new {type(self).__name__}.")
+            if self._opened:
+                return
+            if self._opening:
+                raise CaptureError(f"The {self._source_name} source is already starting.")
+            if sys.platform != "linux":
+                raise CaptureError(f"{self._source_name} capture requires Raspberry Pi OS/Linux; use --source sample on macOS.")
+            self._opening = True
         child = None
         try:
-            context = multiprocessing.get_context("spawn")
-            self._memory = shared_memory.SharedMemory(create=True, size=self._frame_bytes + _RESULT_BYTES)
-            self._connection, child = context.Pipe()
-            self._process = context.Process(
-                target=self._worker_target,
-                args=(child, self._memory.name, self._frame_bytes, *self._worker_arguments), daemon=True,
-            )
-            logger.info("%s", self._startup_message)
-            self._process.start()
-            child.close()
-            child = None
+            self._validate_source()
+            # Allocation/start and close's detachment are one atomic lifecycle
+            # step. Validation can be interrupted by close without allocating.
+            with self._lifecycle_lock:
+                if self._closed:
+                    raise CaptureError(f"The {self._source_name} source is closed.")
+                context = multiprocessing.get_context("spawn")
+                self._memory = shared_memory.SharedMemory(create=True, size=self._frame_bytes + _RESULT_BYTES)
+                self._connection, child = context.Pipe()
+                self._process = context.Process(
+                    target=self._worker_target,
+                    args=(child, self._memory.name, self._frame_bytes, *self._worker_arguments), daemon=True,
+                )
+                logger.info("%s", self._startup_message)
+                self._process.start()
+                child.close()
+                child = None
+            # Never hold the lifecycle lock while a hardware worker is starting.
+            # Privacy pause can detach the transport and kill a stalled worker.
             kind, _ = self._receive(self.camera_settings.startup_timeout_s, self._startup_stage)
             if kind != "ready":
                 raise CaptureError("Camera worker did not complete startup.")
-            self._opened = True
-            logger.info("%s", self._ready_message)
+            with self._lifecycle_lock:
+                if self._closed:
+                    raise CaptureError(f"The {self._source_name} source was closed during startup.")
+                self._opened = True
+                logger.info("%s", self._ready_message)
         except BaseException:
             if child is not None:
                 child.close()
             self.close()
             raise
+        finally:
+            with self._lifecycle_lock:
+                self._opening = False
 
     def _receive(self, timeout_s: float, stage: str):
+        with self._lifecycle_lock:
+            connection = self._connection
+            if self._closed or connection is None:
+                raise CaptureError(f"{self._source_name} worker stopped during {stage}.")
         try:
-            if not self._connection.poll(timeout_s):
+            if not connection.poll(timeout_s):
                 raise CaptureError(f"{self._source_name} {stage} timed out after {timeout_s:g} seconds.")
-            message = self._connection.recv()
-        except (EOFError, BrokenPipeError, OSError) as exc:
+            message = connection.recv()
+        except (EOFError, BrokenPipeError, OSError, ValueError, TypeError) as exc:
             raise CaptureError(f"{self._source_name} worker stopped during {stage}.") from exc
+        with self._lifecycle_lock:
+            if self._closed or self._connection is not connection:
+                raise CaptureError(f"{self._source_name} worker stopped during {stage}.")
         if not isinstance(message, tuple) or len(message) != 2:
             raise CaptureError("Invalid camera worker response.")
         kind, value = message
@@ -191,23 +217,30 @@ class ManagedPiCapture:
     def read_packet(self) -> FramePacket | None:
         self._open()
         try:
-            self._connection.send("read")
+            with self._lifecycle_lock:
+                if self._closed or self._connection is None:
+                    raise CaptureError(f"The {self._source_name} source is closed.")
+                self._connection.send("read")
             kind, length = self._receive(self.camera_settings.capture_timeout_s, "capture")
             if kind == "end":
                 return None
             if kind != "frame" or type(length) is not int or not 0 < length <= _RESULT_BYTES:
                 raise CaptureError(f"Invalid frame response from the {self._source_name} worker.")
-            raw = bytes(self._memory.buf[self._frame_bytes:self._frame_bytes + length])
-            data = json.loads(raw.decode("utf-8"))
-            shape = data["shape"]
-            if (
-                not isinstance(shape, list) or len(shape) != 3 or shape[2] != 3
-                or any(type(value) is not int or value <= 0 for value in shape)
-                or math.prod(shape) > self._frame_bytes
-                or type(data["frame_id"]) is not int or data["frame_id"] <= self._last_frame_id
-            ):
-                raise CaptureError(f"Invalid or stale {self._source_name} frame metadata.")
-            image = np.ndarray(tuple(shape), dtype=np.uint8, buffer=self._memory.buf).copy()
+            with self._lifecycle_lock:
+                if self._closed or self._memory is None:
+                    raise CaptureError(f"The {self._source_name} source is closed.")
+                raw = bytes(self._memory.buf[self._frame_bytes:self._frame_bytes + length])
+                data = json.loads(raw.decode("utf-8"))
+                shape = data["shape"]
+                if (
+                    not isinstance(shape, list) or len(shape) != 3 or shape[2] != 3
+                    or any(type(value) is not int or value <= 0 for value in shape)
+                    or math.prod(shape) > self._frame_bytes
+                    or type(data["frame_id"]) is not int or data["frame_id"] <= self._last_frame_id
+                ):
+                    raise CaptureError(f"Invalid or stale {self._source_name} frame metadata.")
+                # close must not unmap the shared buffer during this owned copy.
+                image = np.ndarray(tuple(shape), dtype=np.uint8, buffer=self._memory.buf).copy()
             inference = data["inference"]
             result = None
             if inference is not None:
@@ -225,8 +258,11 @@ class ManagedPiCapture:
                 )
                 result = DetectionResult(data["frame_id"], inference["backend"], inference["status"],
                                          detections, inference["simulated"])
-            self._last_frame_id = data["frame_id"]
-            return FramePacket(data["frame_id"], data["captured_monotonic_ns"], image, result)
+            with self._lifecycle_lock:
+                if self._closed:
+                    raise CaptureError(f"The {self._source_name} source is closed.")
+                self._last_frame_id = data["frame_id"]
+                return FramePacket(data["frame_id"], data["captured_monotonic_ns"], image, result)
         except (CaptureError, DetectionError):
             self.close()
             raise
@@ -236,13 +272,14 @@ class ManagedPiCapture:
 
     def close(self) -> None:
         """Try graceful shutdown, then terminate/kill a blocked hardware worker."""
-        if self._closed:
-            return
-        self._closed = True
-        self._opened = False
-        connection, self._connection = self._connection, None
-        process, self._process = self._process, None
-        memory, self._memory = self._memory, None
+        with self._lifecycle_lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._opened = False
+            connection, self._connection = self._connection, None
+            process, self._process = self._process, None
+            memory, self._memory = self._memory, None
         try:
             if connection is not None:
                 try:

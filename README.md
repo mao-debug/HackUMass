@@ -19,6 +19,13 @@ upgrades are deferred to Phase 6 at the user's request.
 An optional experimental chess mode tracks human-confirmed board information;
 physical chessboard recognition from the glasses is not yet validated.
 
+Phase 6 adds an optional [hands-free assistant](docs/assistant.md): continuous
+local wake input, cancellable speech, normal/chess switching, local photos,
+four-marker board calibration and opt-in paired-image chess tracking.
+The approved Piper voices and wake model have passed local Mac smoke checks.
+Pi wake accuracy, Bluetooth interruption, real-board accuracy and terminal-free
+cold boot still need physical acceptance. Existing GUI demos remain available.
+
 The [three-minute demo guide](docs/demo.md) provides a return-to-Pi setup,
 presentation sequence, printed card, and offline fallback without claiming
 unmeasured accuracy or performance. Deferred optimization and hardware work
@@ -66,17 +73,17 @@ The optional chess demo observes a board only when requested and proposes a
 standard starting position or one move from confirmed history. A separate
 human confirmation commits it. It provides board information, no suggested
 moves or chess-engine analysis. **Real board recognition from the glasses is
-not yet validated; the user is away from the Pi.**
+not yet validated.**
 
 `chess==1.11.2` is approved and installed in the Mac `.venv`; it is an optional
 project extra and has no effect on default/help/general modes. Pi package
-approval/setup remains pending. No Stockfish or extra model download is needed.
+installation is approved; setup remains pending. No Stockfish is needed.
 
 ```sh
 # Mac: invented fixture positions, local speech, no key/image/audio uploads.
 python3 scripts/run_demo.py --chess --speak --run
 
-# Pi: controlled first board-image checks after Pi package/setup approval.
+# Pi: controlled first board-image checks after the approved package setup.
 python3 scripts/run_demo.py --target pi --chess --cloud --voice --speak --run
 ```
 
@@ -268,14 +275,16 @@ simulation, and the deferred controlled sensor bench. Real paired samples and
 combined camera/Gemini/sensor/audio operation were supplied; USB logs showed
 unavailable readings on disconnect and recovery afterward. Distance accuracy,
 resistor/echo voltage, supply quality, and sustained performance were not
-validated and are deferred to Phase 6. Optional Piper downloads remain pending.
+validated and are deferred to Phase 6. Piper downloads are approved and locally
+tested on the Mac; LJ was selected and Pi setup remains pending.
 
 ## Phase 5: requested voice commands
 
 The new `--voice-commands` flag requires `--scene-live --continuous --preview`. **M**
 records one clip of at most five seconds and sends it to Gemini transcription;
 a local English allowlist selects describe, read text, proximity, stop, or help.
-There is no continuous listening or wake word. The user approved these short
+This established Phase 5 workflow has no continuous listening or wake word;
+the separate Phase 6 assistant adds optional local wake input. The user approved these short
 audio uploads using the existing SDK/key and free-tier scope; no new Python
 packages are required. The user recorded a requested five-second clip through
 the Pi's Bluetooth microphone and heard their recorded voice through playback.
@@ -401,10 +410,12 @@ before adding packages; the source-tree command above remains available.
 
 An optional **Piper neural voice** backend and fixed voice-preview script are
 available for comparing a more natural local voice. Its engine/model downloads
-still require approval, and Pi voice quality/latency have not been verified.
+are approved and locally tested. LJ was selected; Pi voice quality/latency have
+not been verified.
 The isolated `.venv-tts` environment keeps speech dependencies separate from
 the camera environment. See [voice setup and audition](docs/voices.md) before
-using `config/pi-piper-ocr.yaml`. Existing profiles continue to select eSpeak NG.
+using `config/pi-piper-ocr.yaml`. Existing Phase 3–5 profiles retain eSpeak NG;
+the new Phase 6 assistant profile selects LJ Piper.
 
 Phase 3 also supports **Gemini printed-text reading** with your existing SDK
 and saved API key. Stop the live camera command with q/Esc first, then run:
@@ -580,7 +591,7 @@ does not verify native ABI compatibility, camera capture, inference, or audio.
 Camera capture and live CPU inference are recorded separately in
 [docs/hardware.md](docs/hardware.md). Pi 5 Gemini OCR and an audible local speech
 excerpt passed a user-run check; broader recognition accuracy, offline
-Tesseract, and optional neural voice checks remain pending.
+Tesseract, and Pi neural voice checks remain pending; Mac Piper synthesis passed.
 Tests use fixtures and mocked hardware/cloud
 boundaries; they do not replace Pi acceptance tests.
 
@@ -621,6 +632,8 @@ description have user-run evidence, and printed-text output was heard.
 Voice-triggered OCR is not established by the supplied log. Measured
 hardware accuracy, sustained performance, wearable deployment, and upgrades
 remain Phase 6 work at the user's explicit request.
+Phase 6 software adds the [local wake assistant and chess deployment workflow](docs/assistant.md);
+physical acceptance is still pending as recorded in [Phase 6](docs/phase6.md).
 Model class coverage is limited to the selected model's labels; an empty
 detection list is not evidence that a path is clear. The full plan, official
 references, approval gates, and hardware acceptance record are in

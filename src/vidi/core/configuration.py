@@ -223,12 +223,20 @@ class SpeechSettings:
     piper_model_path: Path | None = None
     piper_length_scale: float = 1.0
     player: str | None = None
+    gemini_model: str = "gemini-3.8-flash-lite-tts"
+    gemini_voice: str = "Charon"
+    gemini_style: str = "Clear, calm, conversational."
 
     def __post_init__(self) -> None:
         _integer("speech.speed_wpm", self.speed_wpm)
         _integer("speech.max_words", self.max_words)
         _positive_number("speech.timeout_s", self.timeout_s)
         _optional_text("speech.voice", self.voice)
+        for name in ("gemini_model", "gemini_voice", "gemini_style"):
+            value = getattr(self, name)
+            _optional_text(f"speech.{name}", value)
+            if value is None or len(value) > 200:
+                raise ConfigurationError(f"speech.{name} must contain 1–200 characters.")
         _optional_path("speech.piper_python_path", self.piper_python_path)
         _optional_path("speech.piper_model_path", self.piper_model_path)
         _positive_number("speech.piper_length_scale", self.piper_length_scale)
@@ -270,16 +278,45 @@ class ChessSettings:
     fixture_path: Path | None = None
     orientation: str = "white_near"
     observation_max_age_s: float = 30.0
+    automatic: bool = False
+    calibration_path: Path | None = None
 
     def __post_init__(self) -> None:
         if self.backend not in ("gemini", "fixture"):
             raise ConfigurationError("chess.backend must be gemini or fixture.")
         _optional_path("chess.fixture_path", self.fixture_path)
+        _optional_path("chess.calibration_path", self.calibration_path)
+        if type(self.automatic) is not bool:
+            raise ConfigurationError("chess.automatic must be true or false.")
         if self.orientation not in ("white_near", "black_near"):
             raise ConfigurationError("chess.orientation must be white_near or black_near.")
         _positive_number("chess.observation_max_age_s", self.observation_max_age_s)
         if self.observation_max_age_s > 120:
             raise ConfigurationError("chess.observation_max_age_s cannot exceed 120 seconds.")
+
+
+@dataclass(frozen=True)
+class AssistantSettings:
+    """Headless runtime assets; configuration alone never opens a device."""
+
+    wake_model_dir_path: Path | None = None
+    wake_keywords_path: Path | None = None
+    keyboard_device_path: Path | None = None
+    photo_dir_path: Path = field(default_factory=lambda: Path("artifacts/photos"))
+    wake_threshold: float = 0.25
+    frame_max_age_s: float = 2.0
+
+    def __post_init__(self) -> None:
+        for name in ("wake_model_dir_path", "wake_keywords_path", "keyboard_device_path", "photo_dir_path"):
+            _optional_path(f"assistant.{name}", getattr(self, name))
+        if self.photo_dir_path is None:
+            raise ConfigurationError("assistant.photo_dir_path must name a local folder.")
+        _positive_number("assistant.wake_threshold", self.wake_threshold)
+        if self.wake_threshold > 1:
+            raise ConfigurationError("assistant.wake_threshold cannot exceed 1.")
+        _positive_number("assistant.frame_max_age_s", self.frame_max_age_s)
+        if self.frame_max_age_s > 2:
+            raise ConfigurationError("assistant.frame_max_age_s cannot exceed 2 seconds.")
 
 
 @dataclass(frozen=True)
@@ -318,6 +355,7 @@ class AppSettings:
     proximity: ProximitySettings = field(default_factory=ProximitySettings)
     voice: VoiceSettings = field(default_factory=VoiceSettings)
     chess: ChessSettings = field(default_factory=ChessSettings)
+    assistant: AssistantSettings = field(default_factory=AssistantSettings)
 
     def __post_init__(self) -> None:
         if self.log_level not in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
@@ -361,7 +399,7 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         raise ConfigurationError(f"Cannot read configuration {config_path}: {exc}") from exc
     if document is None:
         raise ConfigurationError("Configuration must contain a YAML mapping, not an empty document.")
-    values = _mapping(document, "root", {"camera", "simulation", "models", "log_level", "detection", "cloud", "ocr", "speech", "proximity", "voice", "chess"})
+    values = _mapping(document, "root", {"camera", "simulation", "models", "log_level", "detection", "cloud", "ocr", "speech", "proximity", "voice", "chess", "assistant"})
     return AppSettings(
         camera=_section(values, "camera", CameraSettings, config_path.parent),
         simulation=_section(values, "simulation", SimulationSettings, config_path.parent),
@@ -374,6 +412,7 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         proximity=_section(values, "proximity", ProximitySettings, config_path.parent),
         voice=_section(values, "voice", VoiceSettings, config_path.parent),
         chess=_section(values, "chess", ChessSettings, config_path.parent),
+        assistant=_section(values, "assistant", AssistantSettings, config_path.parent),
     )
 
 

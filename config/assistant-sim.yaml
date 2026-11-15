@@ -1,0 +1,15 @@
+# Keyboard-only, offline rehearsal. Chess fixture text is explicitly SIMULATED.
+camera:
+  source: sample
+  width: 640
+  height: 480
+  fps: 15
+simulation:
+  preview: true
+models:
+  object_detection_backend: none
+chess:
+  backend: fixture
+  fixture_path: ../examples/chess-fixture.json
+assistant:
+  photo_dir_path: ../artifacts/photos

@@ -1,4 +1,49 @@
-# vidi Phase 6 deployment and performance plan
+# vidi Phase 6 implementation and physical acceptance
+
+The [assistant runbook](assistant.md) covers the headless runtime, local
+“hey vidi” activation, speech auditions, recovery keyboard and user-service
+template. The [chess guide](chess.md) covers four-marker calibration and
+explicitly enabled two-view automatic tracking. These are implemented software
+paths; they do not establish physical acceptance.
+
+Final local regression: **1,836 passed, 4 skipped**. The full suite ran with
+the fake-camera POSIX shared-memory test enabled. The four skips are three
+Tesseract and one eSpeak integration checks because those engines are absent
+on the Mac. Real local LJ synthesis and the real wake model's synthetic-silence
+smoke also passed. No real microphone, Gemini API, Pi board or service was used
+for these checks.
+
+## Current evidence and remaining gates
+
+| Area | Completed locally | Required on the actual Pi/glasses |
+| --- | --- | --- |
+| Natural speech | LJ selected by user; both Piper voices synthesized valid WAVs with warm-worker reuse; Gemini SDK serialization checked offline | Selected headphones, intelligible squares/colors/negations, actual latency |
+| Local wake | Approved sherpa model loaded on Mac; synthetic silence produced no wake; bounded capture/pause/cancellation tests | At least 19/20 intended wakes during playback, silence within one second after phrase completion, zero self-wakes in a 30-minute playback trial |
+| Chess | Marker geometry and strict paired-observation/legal-history tests | Ten correct initial-board scans; zero wrong accepted moves across 50 ground-truth half-moves; at least 90% resolved with first scan or one retry |
+| Headless runtime | Sample camera loop without GUI polling; privacy/recovery/generation tests; reviewable user-service template | Keyboard access, two cold boots without a terminal, Bluetooth duplex and reconnection |
+| Performance | Separate camera/audio/cloud/speech owners, bounded queues and reports | Matched camera-only baseline and 15-minute combined run retaining at least 80% of its capture rate |
+| Privacy/failure | Explicit cloud opt-ins; no raw clips/transcripts in reports; cancellation regression coverage | No idle uploads; network/quota/device loss, Space/F12/Esc, camera/mic reopening and local audio recovery |
+
+All physical gates above are **pending**. Automatic chess is not presented as
+validated. For calibration/scan failures, use the sighted-partner confirmation
+workflow; if vision itself is unverified, label fixture demos SIMULATED and
+keep the live chess goal open. Paired agreement and legal filtering do not
+prove visual accuracy.
+
+The user approved the local speech/wake assets, Pi chess package, fixed Gemini
+speech auditions, selected Gemini spoken replies and requested paired chess
+images. No new billing is authorized. Service enablement, input permissions and
+audio-routing changes have not been performed.
+
+The current milestone supports normal scene/OCR/photo/proximity commands and
+requested chess scans. Free-form contextual follow-ups, automatic approach
+alerts, outdoor/sign/crosswalk extensions and associated measured sensor-range
+feedback remain the subsequent environment milestone. Planned context is
+four turns/two images/60 seconds in RAM with explicit forgetting and fresh
+snapshots for present-tense questions; conversational context is not implemented
+in this release.
+
+## Hardware and optimization runbook
 
 Phase 6 will measure and improve the working prototype, then prepare a
 repeatable demonstration. The current baseline is a Raspberry Pi 5 with an
@@ -73,8 +118,10 @@ changing the schedule.
 
 Measure the stages of several accepted commands separately: local recording,
 transcription, cooldown wait, camera request, and speech. Default recording
-takes five seconds; the shared cloud cooldown adds at least five seconds
-after transcription before a recognized scene/read request can start. Five
+takes five seconds; the established Phase 5 GUI workflow's shared cooldown
+adds at least five seconds after transcription before a scene/read request.
+The new assistant instead spaces image requests separately; transcription
+does not add an extra image cooldown. Five
 seconds is therefore not an end-to-end response-time promise. Record both
 time to first audible feedback and time until the utterance finishes.
 
@@ -127,8 +174,8 @@ Choose upgrades one at a time and repeat the affected comparison:
 
 - For clearer speech, audition the optional Piper voice against eSpeak with
   the same phrases and headphones, measuring intelligibility and delay.
-  Piper runtime and voice-model downloads still require approval of exact
-  packages, model, and sources; the existing backend remains the baseline.
+  Piper/runtime downloads are approved and Mac-tested, and LJ was selected.
+  Pi installation and the measured headphone comparison remain pending.
 - For offline reading, obtain approval for the exact Tesseract engine and
   language-data installation, then test known printed text without networking.
   Existing cloud OCR does not establish offline OCR acceptance.

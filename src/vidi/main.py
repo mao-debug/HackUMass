@@ -17,10 +17,19 @@ from vidi.core.credentials import CredentialError, prompted_gemini_key, save_gem
 def build_parser() -> argparse.ArgumentParser:
     """Describe local backends and the per-run cloud opt-in."""
     parser = argparse.ArgumentParser(
-        description="vidi Phase 5: requested camera scenes, local proximity, printed-text reading, and user-triggered voice commands.",
+        description="vidi Phase 6: requested camera scenes, printed-text reading, local proximity, chess and an optional local wake assistant.",
         allow_abbrev=False,
     )
     parser.add_argument("--version", action="version", version=f"vidi {__version__}")
+    parser.add_argument("--assistant", action="store_true", help="Run the headless-capable local wake assistant; cloud work requires --cloud")
+    parser.add_argument("--mode", choices=("normal", "chess"), help="Initial assistant mode; switch later by voice")
+    parser.add_argument("--wake", action=argparse.BooleanOptionalAction, default=None, help="Assistant local wake detection (default on); --no-wake for keyboard bench tests")
+    parser.add_argument("--cloud", action="store_true", help="Assistant: allow requested Gemini command clips and camera analyses, never idle uploads")
+    parser.add_argument("--cloud-speech", action="store_true", help="Assistant: additionally allow configured Gemini speech text uploads")
+    parser.add_argument("--keyboard-device", type=Path, help="Assistant recovery keyboard /dev/input/by-id/...-event-kbd path; Space stops, F12 privacy, Esc quits")
+    parser.add_argument("--automatic-chess", action="store_true", help="Assistant only: opt into calibrated paired-image chess validation; requires physical acceptance before demo use")
+    parser.add_argument("--calibration", type=Path, help="Assistant chess board calibration JSON path")
+    parser.add_argument("--run-seconds", type=float, help="Assistant: optional finite bench-run duration")
     parser.add_argument("--config", type=Path, help="YAML path; omitted means built-in defaults")
     parser.add_argument("--source", choices=("sample", "image", "webcam", "picamera2", "imx500"))
     parser.add_argument("--image", type=Path, help="Image path (selects image unless --source is given)")
@@ -50,9 +59,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--describe", action="store_true", help="Send ONE last unannotated image to Gemini (cloud opt-in)")
     parser.add_argument("--scene-live", action="store_true", help="With --continuous --preview, D requests one scene image, P reads local proximity; no automatic uploads or speech")
     parser.add_argument("--chess-live", action="store_true", help="With --continuous --preview, request board scans and confirm changes; physical board recognition is experimental")
-    parser.add_argument("--chess-fixture", type=Path, help="Explicit simulated board observations; requires --chess-live and disables cloud/key use")
-    parser.add_argument("--board-orientation", choices=("white_near", "black_near"), help="Known board orientation; requires --chess-live")
-    parser.add_argument("--offline", action="store_true", help="With scene preview or fixture chess, disable cloud actions and microphone; local controls remain available")
+    parser.add_argument("--chess-fixture", type=Path, help="Explicit simulated board observations; requires --chess-live or --assistant")
+    parser.add_argument("--board-orientation", choices=("white_near", "black_near"), help="Known board orientation; requires --chess-live or --assistant")
+    parser.add_argument("--offline", action="store_true", help="Disable cloud actions; assistant local wake may remain active, established GUI workflows disable microphone")
     parser.add_argument("--voice-commands", action="store_true", help="With --scene-live or Gemini --chess-live plus --continuous --preview, M records up to 5 seconds and sends audio to Gemini; no continuous listening")
     parser.add_argument("--command-audio", type=Path, help="On M, send this local WAV instead of recording a microphone; requires --voice-commands")
     parser.add_argument("--microphone-device", help="Literal ALSA input-device name overriding voice.device; requires --voice-commands")
@@ -87,6 +96,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.offline and (args.prompt_key or args.voice_commands):
             raise ConfigurationError("--offline cannot be combined with --prompt-key or --voice-commands.")
         settings = load_settings(args.config)
+        if args.assistant:
+            return _run_assistant_cli(args, settings)
+        if any((args.mode is not None, args.wake is not None, args.cloud, args.cloud_speech,
+                args.keyboard_device is not None, args.automatic_chess, args.calibration is not None,
+                args.run_seconds is not None)):
+            raise ConfigurationError("Assistant options require --assistant.")
         if (args.chess_fixture is not None or args.board_orientation is not None) and not args.chess_live:
             raise ConfigurationError("--chess-fixture and --board-orientation require --chess-live.")
         if args.chess_live and (args.proximity or args.sensor_port is not None):
@@ -278,6 +293,118 @@ def main(argv: list[str] | None = None) -> int:
         logging.getLogger(__name__).info("Simulation stopped by the user.")
         return 130
     return 0
+
+
+def _run_assistant_cli(args, settings):
+    """Keep assistant opt-ins separate from the established snapshot/GUI CLI."""
+    import math
+    from vidi.core.assistant_runtime import AssistantError, run_assistant
+
+    if any((args.scene_live, args.chess_live, args.describe, args.read_text,
+            args.gemini_read, args.gemini_detect, args.gemini_live, args.voice_commands,
+            args.command_audio is not None, args.speech_output is not None,
+            args.question is not None, args.max_frames is not None,
+            args.output is not None, args.model is not None, args.model_config is not None,
+            args.threshold is not None, args.labels is not None,
+            args.detections_fixture is not None, args.max_detections is not None)):
+        raise ConfigurationError("Use --assistant by itself as the workflow; use --run-seconds for a bounded bench run.")
+    if args.offline and (args.cloud or args.cloud_speech):
+        raise ConfigurationError("--offline conflicts with assistant cloud opt-ins.")
+    if args.cloud_speech and not args.cloud:
+        raise ConfigurationError("--cloud-speech requires --cloud.")
+    if args.prompt_key and not args.cloud:
+        raise ConfigurationError("Assistant --prompt-key requires --cloud.")
+    if args.run_seconds is not None and (not math.isfinite(args.run_seconds) or not 0 < args.run_seconds <= 3600):
+        raise ConfigurationError("--run-seconds must be finite, greater than zero and at most 3600.")
+    if args.sensor_port is not None and not args.proximity:
+        raise ConfigurationError("--sensor-port requires --proximity.")
+    if args.camera_index is not None and args.image is not None:
+        raise ConfigurationError("Choose --image or --camera-index.")
+    if args.detector not in (None, "none"):
+        raise ConfigurationError("Assistant uses requested analyses with detector none.")
+    camera = {}
+    if args.source is not None:
+        camera["source"] = args.source
+    if args.image is not None:
+        if args.source not in (None, "image"):
+            raise ConfigurationError("--image requires source image.")
+        camera.update(source="image", image_path=args.image.expanduser().resolve())
+    if args.camera_index is not None:
+        if args.source not in (None, "webcam"):
+            raise ConfigurationError("--camera-index requires source webcam.")
+        camera.update(source="webcam", webcam_index=args.camera_index)
+    assistant = {}
+    if args.keyboard_device is not None:
+        # Keep by-id symlink rather than binding to a transient event number.
+        assistant["keyboard_device_path"] = args.keyboard_device.expanduser().absolute()
+    chess = {}
+    if args.automatic_chess:
+        chess["automatic"] = True
+    if args.calibration is not None:
+        chess["calibration_path"] = args.calibration.expanduser().resolve()
+    if args.board_orientation is not None:
+        chess["orientation"] = args.board_orientation
+    if args.chess_fixture is not None:
+        chess.update(backend="fixture", fixture_path=args.chess_fixture.expanduser().resolve())
+    settings = replace(
+        settings, camera=replace(settings.camera, **camera),
+        assistant=replace(settings.assistant, **assistant),
+        chess=replace(settings.chess, **chess),
+        voice=replace(settings.voice, device=args.microphone_device) if args.microphone_device else settings.voice,
+        simulation=replace(settings.simulation,
+                           preview=args.preview if args.preview is not None else settings.simulation.preview,
+                           report_path=args.report.expanduser().resolve() if args.report else settings.simulation.report_path),
+        proximity=replace(settings.proximity, port=args.sensor_port) if args.sensor_port else settings.proximity,
+        log_level=args.log_level or settings.log_level,
+    )
+    if settings.camera.source == "imx500" or settings.models.object_detection_backend not in (None, "none"):
+        raise ConfigurationError("Assistant requires ordinary camera capture with detector none.")
+    if settings.voice.audio_path is not None:
+        raise ConfigurationError("Assistant uses a persistent local microphone; remove voice.audio_path.")
+    if settings.chess.automatic:
+        if settings.chess.calibration_path is None or settings.chess.backend != "gemini":
+            raise ConfigurationError("Automatic chess requires Gemini and a verified board calibration path.")
+        if settings.chess.observation_max_age_s > 30:
+            raise ConfigurationError("Automatic chess observation age cannot exceed 30 seconds.")
+    if args.proximity:
+        p = settings.proximity
+        if p.backend == "disabled" or (p.backend == "serial" and not p.port) or (p.backend == "fixture" and not p.fixture_path):
+            raise ConfigurationError("Enable a configured serial port or fixture before requesting proximity.")
+    if settings.models.text_to_speech_backend == "gemini" and not args.cloud_speech:
+        raise ConfigurationError("Gemini speech requires the additional --cloud-speech opt-in.")
+    if settings.models.text_to_speech_backend not in (None, "espeak_ng", "say", "piper", "gemini"):
+        raise ConfigurationError("Assistant speech backend must be espeak_ng, say, piper or gemini.")
+    from vidi.core.credentials import gemini_key_path
+    protected = (gemini_key_path(), args.config,
+                 settings.camera.image_path, settings.chess.fixture_path,
+                 settings.chess.calibration_path, settings.assistant.wake_keywords_path,
+                 settings.voice.audio_path, settings.proximity.fixture_path,
+                 settings.speech.piper_model_path)
+    if settings.simulation.report_path is not None and any(
+            path is not None and settings.simulation.report_path.resolve() == path.resolve() for path in protected):
+        raise ConfigurationError("The assistant report must not overwrite input assets.")
+    if (settings.simulation.report_path is not None and settings.assistant.wake_model_dir_path is not None
+            and settings.simulation.report_path.resolve().is_relative_to(settings.assistant.wake_model_dir_path.resolve())):
+        raise ConfigurationError("The assistant report must not overwrite wake assets.")
+    logging.basicConfig(level=settings.log_level, format="%(levelname)s: %(message)s")
+    cloud_enabled = args.cloud
+    with ExitStack() as contexts:
+        if cloud_enabled:
+            try:
+                contexts.enter_context(prompted_gemini_key() if args.prompt_key else saved_gemini_key())
+            except CredentialError:
+                logging.getLogger(__name__).warning("Gemini credentials unavailable. Starting with local controls only.")
+                cloud_enabled = False
+        try:
+            result = run_assistant(settings, mode=args.mode or "normal", cloud_enabled=cloud_enabled,
+                                   cloud_speech=args.cloud_speech, wake=args.wake is not False,
+                                   speak=True, proximity=args.proximity, run_seconds=args.run_seconds)
+            logging.getLogger(__name__).info("Assistant finished: %s camera frames; measured capture rate=%s FPS.",
+                                            result["frames_processed"], result["capture_fps"])
+            return 0
+        except AssistantError as exc:
+            logging.getLogger(__name__).error("%s", exc)
+            return 1
 
 
 if __name__ == "__main__":
